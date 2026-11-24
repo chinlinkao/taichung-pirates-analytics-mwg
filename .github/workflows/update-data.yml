@@ -49,10 +49,12 @@ jobs:
       new_sha: ${{ steps.commit.outputs.new_sha }}
     steps:
       - name: 檢出專案程式碼
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          ref: main
 
       - name: 設定 Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
@@ -62,7 +64,7 @@ jobs:
         run: pip install -r requirements-crawler.txt
 
       - name: 還原並保存 HTML 本地快取
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: data/raw_html
           key: raw-html-v1-${{ hashFiles('data/海盜隊網頁標題.csv') }}-${{ github.run_id }}
