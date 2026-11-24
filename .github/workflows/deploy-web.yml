@@ -23,12 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 檢出專案程式碼
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: 設定 Node.js 20
-        uses: actions/setup-node@v4
+      - name: 設定 Node.js 24
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: "web/package-lock.json"
 
@@ -49,10 +49,10 @@ jobs:
         run: npm run build
 
       - name: 設定 GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: 上傳 Pages 建置產物
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: web/dist
 
@@ -65,4 +65,4 @@ jobs:
     steps:
       - name: 部署至 GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
