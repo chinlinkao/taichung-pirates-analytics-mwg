@@ -106,4 +106,4 @@ npm run build       # Vite 正式環境靜態打包 (輸出至 web/dist)
 1. 前往 GitHub Repository 的 **Settings → Pages**。
 2. 在 **Build and deployment → Source** 選擇 **GitHub Actions**。
 3. 每次執行 `update_all.bat` 或推送至 `main` 分支時，GitHub Actions 會自動執行 `npm ci → typecheck → test → build` 並發布至：
-   - **線上網址**：https://chinlinkao.github.io/taichung-pirates-analytics/
+   - **線上網址**：https://chinlinkao.github.io/taichung-pirates-analytics-mwg/

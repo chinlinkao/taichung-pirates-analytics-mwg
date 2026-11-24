@@ -57,7 +57,7 @@ echo.
 echo ==========================================================
 echo [3/3] 全流程完成！
 echo 數據與靜態 JSON 已推送至 GitHub，將自動觸發線上看板更新！
-echo [新版看板] https://chinlinkao.github.io/taichung-pirates-analytics/
+echo [新版看板] https://chinlinkao.github.io/taichung-pirates-analytics-mwg/
 echo ==========================================================
 echo.
 pause

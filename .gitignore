@@ -36,3 +36,6 @@ web/.vite/
 
 # 明確保留前端靜態資料 JSON (供 GitHub Pages 部署與前端單元測試)
 !web/public/data/pirates.json
+
+# 封存之舊版腳本與歷史文件
+OLD/
