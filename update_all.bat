@@ -56,8 +56,8 @@ if errorlevel 1 (
 echo.
 echo ==========================================================
 echo [3/3] 全流程完成！
-echo 數據已成功推送到 GitHub，Streamlit Cloud 正在自動更新線上看板！
-echo [網址] https://taichung-pirates-analytics-8daxykwaebdotzf79m37ya.streamlit.app/
+echo 數據與靜態 JSON 已推送至 GitHub，將自動觸發線上看板更新！
+echo [新版看板] https://chinlinkao.github.io/taichung-pirates-analytics/
 echo ==========================================================
 echo.
 pause

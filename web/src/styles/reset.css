@@ -1,0 +1,108 @@
+/* 輕量現代 CSS Reset 與版面安全防呆 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-padding-top: calc(4.75rem + env(safe-area-inset-top, 0px));
+}
+
+body {
+  margin: 0;
+  min-block-size: 100dvh;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+
+/* 媒體自適應容器寬度，禁止溢出 */
+img,
+svg,
+canvas,
+video {
+  display: block;
+  max-inline-size: 100%;
+}
+
+img,
+svg,
+video {
+  block-size: auto;
+}
+
+/* 平衡短標題斷行與優化段落排版 */
+h1,
+h2,
+h3 {
+  margin: 0;
+  text-wrap: balance;
+  line-height: 1.25;
+}
+
+p,
+li {
+  text-wrap: pretty;
+}
+
+p {
+  margin: 0;
+}
+
+/* 長連結與程式碼允許在任意處折行 */
+:where(a, code) {
+  overflow-wrap: anywhere;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* 無障礙視覺隱藏（供螢幕報讀器與單次狀態播報使用） */
+.sr-only {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 跳至主內容快速鍵盤連結 */
+.skip-link {
+  position: fixed;
+  inset-block-start: -4rem;
+  inset-inline-start: 1rem;
+  z-index: 100;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-weight: 700;
+  text-decoration: none;
+  transition: inset-block-start 0.15s ease;
+}
+
+.skip-link:focus-visible {
+  inset-block-start: 0.75rem;
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skip-link {
+    transition: none;
+  }
+}

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- 宣告支援亮／暗色系統主題，搭配同步腳本避免 FOUC 白屏閃爍 -->
+  <meta name="color-scheme" content="light dark">
+  <script>
+    try {
+      var savedScheme = localStorage.getItem("color-scheme");
+      if (savedScheme === "light" || savedScheme === "dark") {
+        var meta = document.querySelector('meta[name="color-scheme"]');
+        if (meta) meta.setAttribute("content", savedScheme);
+      }
+    } catch (_) {
+      /* 瀏覽器封鎖網站資料時安全忽略 */
+    }
+  </script>
+  <title>台中小海盜棒球數據庫｜2024–2026 戰情與成長看板</title>
+  <meta name="description" content="台中小海盜社區棒球隊 (U8 / U10 / U12 / U15) 跨屆戰績、投打排行榜、球員成長趨勢與對手分析戰情看板。">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳至主要內容</a>
+  <div id="app"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+/* 全域頁面骨架與容器響應式佈局 */
+
+.site-header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 20;
+  background-color: var(--color-surface);
+  border-block-end: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  padding-block: max(0.65rem, env(safe-area-inset-top, 0px)) 0.65rem;
+  padding-inline: max(1rem, env(safe-area-inset-left, 0px))
+    max(1rem, env(safe-area-inset-right, 0px));
+}
+
+.header-inner {
+  max-inline-size: 1320px;
+  margin-inline: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.brand-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-inline-size: 0;
+}
+
+.brand-logo {
+  flex: none;
+  inline-size: 38px;
+  block-size: 38px;
+  border-radius: var(--radius-sm);
+}
+
+.brand-title-wrap {
+  min-inline-size: 0;
+}
+
+.brand-title {
+  font-size: clamp(1.05rem, 2.2vw, 1.3rem);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.brand-subtitle {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.last-updated-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.app-main {
+  max-inline-size: 1320px;
+  margin-inline: auto;
+  padding-block: 1rem max(2.25rem, env(safe-area-inset-bottom, 0px));
+  padding-inline: max(1rem, env(safe-area-inset-left, 0px))
+    max(1rem, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 1rem;
+}
+
+/* 桌機篩選工具列與行動版切換控制 */
+.desktop-filter-host {
+  display: block;
+}
+
+.mobile-filter-trigger {
+  display: none;
+}
+
+@media (width < 860px) {
+  .desktop-filter-host {
+    display: none;
+  }
+
+  .mobile-filter-trigger {
+    display: inline-flex;
+  }
+}
+
+/* 容器查詢驅動之響應式 KPI 網格 */
+.kpi-container {
+  container: kpi-grid / inline-size;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+@container kpi-grid (inline-size >= 420px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container kpi-grid (inline-size >= 760px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container kpi-grid (inline-size >= 1020px) {
+  .kpi-grid--five {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .kpi-grid--four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* 圖表雙欄容器查詢 */
+.charts-container {
+  container: charts-grid / inline-size;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@container charts-grid (inline-size >= 820px) {
+  .charts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.section-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}

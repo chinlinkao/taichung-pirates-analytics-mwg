@@ -1,0 +1,195 @@
+/* 台中小海盜黑／金／白主題 Design Tokens 與光暗模式系統 */
+
+:root {
+  /* 字型與數據等寬設定 */
+  --font-sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* 圓角與間距刻度 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* 觸控目標最小尺寸 (WCAG 2.5.8 / 2.5.5) */
+  --target-size: 24px;
+
+  /* 原始淺色／深色色票 */
+  --bg-light: #f6f7fa;
+  --bg-dark: #0e1117;
+
+  --surface-light: #ffffff;
+  --surface-dark: #161b24;
+
+  --surface-muted-light: #eef1f6;
+  --surface-muted-dark: #1f2633;
+
+  --text-light: #141821;
+  --text-dark: #f1f4f9;
+
+  --text-muted-light: #4b5565;
+  --text-muted-dark: #a6b1c2;
+
+  --border-light: #d5dce6;
+  --border-dark: #2c3545;
+
+  /* 強調色：海盜金 (依背景對比微調) */
+  --accent-light: #c88a00;
+  --accent-dark: #f2be38;
+
+  --accent-text-light: #805600;
+  --accent-text-dark: #ffd45e;
+
+  --accent-ink-light: #ffffff;
+  --accent-ink-dark: #11151d;
+
+  --accent-soft-light: #fff6de;
+  --accent-soft-dark: #2d2511;
+
+  --win-light: #116a3d;
+  --win-dark: #4ade80;
+  --loss-light: #b42318;
+  --loss-dark: #f87171;
+  --tie-light: #526071;
+  --tie-dark: #94a3b8;
+
+  --focus-ring-light: #005fcc;
+  --focus-ring-dark: #ffd45e;
+
+  --scrollbar-track-light: #e7ebf2;
+  --scrollbar-track-dark: #181e28;
+  --scrollbar-thumb-light: #8996aa;
+  --scrollbar-thumb-dark: #546277;
+
+  --shadow-sm-light: 0 1px 3px rgb(16 24 40 / 0.08);
+  --shadow-sm-dark: 0 1px 4px rgb(0 0 0 / 0.35);
+  --shadow-md-light: 0 8px 24px rgb(16 24 40 / 0.1);
+  --shadow-md-dark: 0 10px 28px rgb(0 0 0 / 0.5);
+
+  /* 預設淺色模式映射 */
+  --color-bg: var(--bg-light);
+  --color-surface: var(--surface-light);
+  --color-surface-muted: var(--surface-muted-light);
+  --color-text: var(--text-light);
+  --color-text-muted: var(--text-muted-light);
+  --color-border: var(--border-light);
+  --color-accent: var(--accent-light);
+  --color-accent-text: var(--accent-text-light);
+  --color-accent-ink: var(--accent-ink-light);
+  --color-accent-soft: var(--accent-soft-light);
+  --color-win: var(--win-light);
+  --color-loss: var(--loss-light);
+  --color-tie: var(--tie-light);
+  --color-focus-ring: var(--focus-ring-light);
+  --color-scrollbar-track: var(--scrollbar-track-light);
+  --color-scrollbar-thumb: var(--scrollbar-thumb-light);
+  --shadow-sm: var(--shadow-sm-light);
+  --shadow-md: var(--shadow-md-light);
+
+  /* 基礎 color-scheme 必須維持 light dark 以支援系統自動跟隨 */
+  color-scheme: light dark;
+  accent-color: var(--color-accent);
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+}
+
+/* 透過 :has() 將 <meta name="color-scheme"> 的使用者切換即時反映至 :root */
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  color-scheme: dark;
+}
+
+:root:has(> head > meta[name="color-scheme"][content="light"]) {
+  color-scheme: light;
+}
+
+/* 不支援 light-dark() 的舊版瀏覽器 Fallback */
+@media (prefers-color-scheme: dark) {
+  :root:not(:has(> head > meta[name="color-scheme"][content="light"])) {
+    --color-bg: var(--bg-dark);
+    --color-surface: var(--surface-dark);
+    --color-surface-muted: var(--surface-muted-dark);
+    --color-text: var(--text-dark);
+    --color-text-muted: var(--text-muted-dark);
+    --color-border: var(--border-dark);
+    --color-accent: var(--accent-dark);
+    --color-accent-text: var(--accent-text-dark);
+    --color-accent-ink: var(--accent-ink-dark);
+    --color-accent-soft: var(--accent-soft-dark);
+    --color-win: var(--win-dark);
+    --color-loss: var(--loss-dark);
+    --color-tie: var(--tie-dark);
+    --color-focus-ring: var(--focus-ring-dark);
+    --color-scrollbar-track: var(--scrollbar-track-dark);
+    --color-scrollbar-thumb: var(--scrollbar-thumb-dark);
+    --shadow-sm: var(--shadow-sm-dark);
+    --shadow-md: var(--shadow-md-dark);
+  }
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  --color-bg: var(--bg-dark);
+  --color-surface: var(--surface-dark);
+  --color-surface-muted: var(--surface-muted-dark);
+  --color-text: var(--text-dark);
+  --color-text-muted: var(--text-muted-dark);
+  --color-border: var(--border-dark);
+  --color-accent: var(--accent-dark);
+  --color-accent-text: var(--accent-text-dark);
+  --color-accent-ink: var(--accent-ink-dark);
+  --color-accent-soft: var(--accent-soft-dark);
+  --color-win: var(--win-dark);
+  --color-loss: var(--loss-dark);
+  --color-tie: var(--tie-dark);
+  --color-focus-ring: var(--focus-ring-dark);
+  --color-scrollbar-track: var(--scrollbar-track-dark);
+  --color-scrollbar-thumb: var(--scrollbar-thumb-dark);
+  --shadow-sm: var(--shadow-sm-dark);
+  --shadow-md: var(--shadow-md-dark);
+}
+
+/* 現代瀏覽器使用原生 light-dark()，自動同步系統偏好與手動覆寫 */
+@supports (color: light-dark(white, black)) {
+  :root {
+    --color-bg: light-dark(var(--bg-light), var(--bg-dark));
+    --color-surface: light-dark(var(--surface-light), var(--surface-dark));
+    --color-surface-muted: light-dark(var(--surface-muted-light), var(--surface-muted-dark));
+    --color-text: light-dark(var(--text-light), var(--text-dark));
+    --color-text-muted: light-dark(var(--text-muted-light), var(--text-muted-dark));
+    --color-border: light-dark(var(--border-light), var(--border-dark));
+    --color-accent: light-dark(var(--accent-light), var(--accent-dark));
+    --color-accent-text: light-dark(var(--accent-text-light), var(--accent-text-dark));
+    --color-accent-ink: light-dark(var(--accent-ink-light), var(--accent-ink-dark));
+    --color-accent-soft: light-dark(var(--accent-soft-light), var(--accent-soft-dark));
+    --color-win: light-dark(var(--win-light), var(--win-dark));
+    --color-loss: light-dark(var(--loss-light), var(--loss-dark));
+    --color-tie: light-dark(var(--tie-light), var(--tie-dark));
+    --color-focus-ring: light-dark(var(--focus-ring-light), var(--focus-ring-dark));
+    --color-scrollbar-track: light-dark(var(--scrollbar-track-light), var(--scrollbar-track-dark));
+    --color-scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));
+    --shadow-sm: light-dark(var(--shadow-sm-light), var(--shadow-sm-dark));
+    --shadow-md: light-dark(var(--shadow-md-light), var(--shadow-md-dark));
+  }
+}
+
+/* 觸控裝置放大互動熱區至 44x44 CSS px */
+@media (pointer: coarse) {
+  :root {
+    --target-size: 44px;
+  }
+}
+
+/* 舊版 WebKit 捲軸美化 Fallback (置於 @supports not 避免衝突) */
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-scrollbar-track);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar-thumb);
+    border-radius: 999px;
+  }
+}

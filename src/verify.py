@@ -7,6 +7,7 @@
   - 每次修改解析邏輯後，必須執行 python src/verify.py 驗證通過才算完成。
 """
 
+import csv
 import sqlite3
 import sys
 from pathlib import Path
@@ -17,10 +18,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import DEFAULT_DB_PATH, get_db_connection
 
+DEFAULT_CSV_PATH = Path("data/海盜隊網頁標題.csv")
+
 
 class VerificationRunner:
-    def __init__(self, db_path: Path | str = DEFAULT_DB_PATH):
+    def __init__(
+        self,
+        db_path: Path | str = DEFAULT_DB_PATH,
+        csv_path: Path | str = DEFAULT_CSV_PATH,
+    ):
         self.db_path = Path(db_path)
+        self.csv_path = Path(csv_path)
         self.passed = True
         self.errors: List[str] = []
         self.warnings: List[str] = []
@@ -66,6 +74,33 @@ class VerificationRunner:
         finally:
             conn.close()
 
+    def _load_expected_csv_rows(self) -> Tuple[int, set[int]]:
+        """讀取種子 CSV 檔案並回傳 (有效資料筆數, 預期編號集合)。"""
+        if not self.csv_path.exists():
+            self.log_error(f"種子 CSV 檔案不存在: {self.csv_path}")
+            return 0, set()
+
+        total_count = 0
+        row_nos: set[int] = set()
+        has_valid_row_nos = True
+
+        # 必須指定 utf-8-sig 處理 UTF-8 BOM，避免欄位名稱出現 \ufeff
+        with open(self.csv_path, mode="r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if not any((val or "").strip() for val in row.values()):
+                    continue
+                total_count += 1
+                raw_no = (row.get("編號") or "").strip()
+                try:
+                    row_nos.add(int(raw_no))
+                except ValueError:
+                    has_valid_row_nos = False
+
+        if not has_valid_row_nos or len(row_nos) != total_count:
+            return total_count, set(range(1, total_count + 1))
+        return total_count, row_nos
+
     def check_coverage(self, conn: sqlite3.Connection):
         print("\n[1/5] 檢查資料覆蓋率 (Coverage Check)...")
         c = conn.cursor()
@@ -78,22 +113,31 @@ class VerificationRunner:
         else:
             self.log_error("leagues 表為空！")
 
-        # 檢查 teams 是否為 41 隊
+        # 動態讀取 CSV 筆數並比對 teams 數量與編號覆蓋
+        expected_count, expected_row_nos = self._load_expected_csv_rows()
+
         c.execute("SELECT COUNT(*) FROM teams;")
         team_count = c.fetchone()[0]
-        if team_count == 41:
-            self.log_success("參賽球隊剛好為 41 隊 (符合 CSV 41 筆種子)")
-        else:
-            self.log_error(f"參賽球隊數為 {team_count}，預期應為 41 隊！")
 
-        # 檢查 CSV 編號覆蓋
-        c.execute("SELECT DISTINCT csv_row_no FROM teams WHERE csv_row_no IS NOT NULL;")
-        row_nos = {r[0] for r in c.fetchall()}
-        missing_rows = set(range(1, 42)) - row_nos
-        if not missing_rows:
-            self.log_success("CSV 編號 1 ~ 41 完整建檔，無缺漏")
-        else:
-            self.log_error(f"缺漏之 CSV 編號: {sorted(missing_rows)}")
+        if expected_count > 0:
+            if team_count == expected_count:
+                self.log_success(f"參賽球隊剛好為 {expected_count} 隊 (符合 CSV {expected_count} 筆種子)")
+            else:
+                self.log_error(f"參賽球隊數為 {team_count}，預期應為 {expected_count} 隊！")
+
+            # 檢查 CSV 編號覆蓋
+            c.execute("SELECT DISTINCT csv_row_no FROM teams WHERE csv_row_no IS NOT NULL;")
+            row_nos = {r[0] for r in c.fetchall()}
+            missing_rows = expected_row_nos - row_nos
+            if not missing_rows:
+                min_no, max_no = min(expected_row_nos), max(expected_row_nos)
+                self.log_success(
+                    f"CSV 編號 {min_no} ~ {max_no}（共 {len(expected_row_nos)} 筆）完整建檔，無缺漏"
+                )
+            else:
+                self.log_error(f"缺漏之 CSV 編號: {sorted(missing_rows)}")
+        elif self.csv_path.exists():
+            self.log_error(f"種子 CSV 檔案無有效資料列: {self.csv_path}")
 
         # 檢查 0 名冊隊伍
         c.execute("""
@@ -107,7 +151,7 @@ class VerificationRunner:
             names = [f"#{r['csv_row_no']} {r['team_name']}(ID:{r['team_id']})" for r in empty_roster_teams]
             self.log_warning(f"名冊為空的球隊 ({len(empty_roster_teams)} 隊，可能尚未開賽): {', '.join(names)}")
         else:
-            self.log_success("全數 41 隊皆有名冊資料")
+            self.log_success(f"全數 {team_count} 隊皆有名冊資料")
 
         # 檢查 0 賽程隊伍
         c.execute("""
@@ -121,7 +165,7 @@ class VerificationRunner:
             names = [f"#{r['csv_row_no']} {r['team_name']}(ID:{r['team_id']})" for r in empty_match_teams]
             self.log_warning(f"賽程為空的球隊 ({len(empty_match_teams)} 隊，可能尚未排定賽程): {', '.join(names)}")
         else:
-            self.log_success("全數 41 隊皆有賽程資料")
+            self.log_success(f"全數 {team_count} 隊皆有賽程資料")
 
     def check_same_name_dedup(self, conn: sqlite3.Connection):
         print("\n[2/5] 檢查同名球員歸戶防呆 (Same-name De-duplication)...")

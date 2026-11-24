@@ -28,3 +28,11 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Web frontend (Vite + TypeScript)
+web/node_modules/
+web/dist/
+web/.vite/
+
+# 明確保留前端靜態資料 JSON (供 GitHub Pages 部署與前端單元測試)
+!web/public/data/pirates.json
