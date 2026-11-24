@@ -33,7 +33,7 @@ pip install -r requirements-crawler.txt
 # 離線重構入庫、驗算並匯出前端靜態 JSON（不發出網路請求）
 .venv\Scripts\python.exe run_pipeline.py --parse-only
 
-# 日常更新 2026 賽事並推送 GitHub 觸發自動部署（Windows 可直接雙擊）
+# 日常更新當季賽事並推送 GitHub 觸發自動部署（Windows 可直接雙擊，作為本機備援）
 update_all.bat
 ```
 
@@ -65,7 +65,8 @@ npm run build       # Vite 正式環境靜態打包 (輸出至 web/dist)
 ```text
 ├── .github/
 │   └── workflows/
-│       └── deploy-web.yml         # GitHub Actions 自動建置 web/ 並部署 GitHub Pages
+│       ├── deploy-web.yml         # GitHub Actions 自動建置 web/ 並部署 GitHub Pages
+│       └── update-data.yml        # 每日 11:00 自動同步賽事數據並串接 Pages 部署
 ├── .gitignore                     # 忽略 .venv、data/raw_html、web/node_modules 等
 ├── AGENTS.md                      # 專案規範、棒球數據模型鐵則與驗證閘道
 ├── IMPLEMENTATION_PLAN_MWG.md     # MWG 現代前端遷移實行計畫
@@ -100,10 +101,17 @@ npm run build       # Vite 正式環境靜態打包 (輸出至 web/dist)
 
 ---
 
-## ☁️ 雲端自動部署（GitHub Pages）
+## ☁️ 雲端每日自動更新與部署（GitHub Actions & Pages）
 
-本儲存庫已內建 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml)：
-1. 前往 GitHub Repository 的 **Settings → Pages**。
-2. 在 **Build and deployment → Source** 選擇 **GitHub Actions**。
-3. 每次執行 `update_all.bat` 或推送至 `main` 分支時，GitHub Actions 會自動執行 `npm ci → typecheck → test → build` 並發布至：
+本儲存庫已內建自動化雙工作流程：
+1. **每日自動排程（[.github/workflows/update-data.yml](.github/workflows/update-data.yml)）**：
+   - 每天 **台灣時間 11:00（UTC 03:00）** 自動啟動管線，依當前時間自動推算當季年度與賽季（`--auto-current`），並透過 `actions/cache` 保存歷史 `data/raw_html/` 快取。
+   - **僅在賽事／統計／名單有實質異動時**才會提交 `data/pirates.db`、`data/海盜隊網頁標題.csv` 與 `web/public/data/pirates.json` 至 `main`，並自動呼叫 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) 重建與發布 GitHub Pages。
+   - 亦支援 **Run workflow** 手動觸發，可指定 `refresh_year`、`refresh_season`，或勾選 `discover`（探索新賽事網址，等同雲端版 `update_full_discovery.bat`）與 `force`（全量重抓快取）。
+2. **本地端限定手動更新入口**：
+   - 本機以 `run_web_dev.bat`（或 `npm run dev`）開啟看板時，Header 右側會顯示「**手動更新**」捷徑，點擊可快速開啟 GitHub Actions 手動觸發頁面；正式建置部署至 GitHub Pages 時會自動移除該按鈕，保持線上看板精簡純粹。
+3. **本機開發同步提醒**：
+   - 因雲端每日排程會自動推送最新 `data/pirates.db` 與 `web/public/data/pirates.json` 回 `main`，在本機修改程式碼或執行 `update_all.bat` 前，建議先執行 `git pull` 以避免合併衝突。
+4. **GitHub Pages 設定**：
+   - 前往 GitHub Repository 的 **Settings → Pages**，在 **Build and deployment → Source** 選擇 **GitHub Actions**。
    - **線上網址**：https://chinlinkao.github.io/taichung-pirates-analytics-mwg/

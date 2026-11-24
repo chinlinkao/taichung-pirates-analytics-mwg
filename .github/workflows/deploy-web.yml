@@ -8,6 +8,13 @@ on:
       - "web/**"
       - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "指定檢出之 Git ref 或 commit SHA"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -24,6 +31,8 @@ jobs:
     steps:
       - name: 檢出專案程式碼
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: 設定 Node.js 24
         uses: actions/setup-node@v7

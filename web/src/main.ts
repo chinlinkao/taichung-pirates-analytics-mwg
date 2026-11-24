@@ -30,6 +30,9 @@ import { createOverviewView } from "./views/overview";
 import { createPlayerProfileView } from "./views/player-profile";
 
 const DATA_URL = "./data/pirates.json";
+const LOCAL_MANUAL_SYNC_URL = import.meta.env.DEV
+  ? "https://github.com/chinlinkao/taichung-pirates-analytics-mwg/actions/workflows/update-data.yml"
+  : undefined;
 
 function renderLoadingSkeleton(root: HTMLElement): void {
   const shell = document.createElement("div");
@@ -145,6 +148,7 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
       initialState.filters,
       dataset.meta.filter_options
     ),
+    manualSyncUrl: LOCAL_MANUAL_SYNC_URL,
     onOpenMobileFilters: () => filterBar.openDrawer(),
     onThemeChange: () => {
       playerProfileView.refreshTheme();
@@ -198,7 +202,7 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
 
   const footerRight = document.createElement("span");
   footerRight.textContent =
-    "純靜態資料檢視｜依 player_uid 跨屆歸戶・投球局數以整數出局數累積";
+    "每日 11:00 自動同步｜純靜態資料檢視・依 player_uid 跨屆歸戶・投球局數以整數出局數累積";
 
   footer.append(footerLeft, footerRight);
 

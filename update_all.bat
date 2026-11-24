@@ -7,7 +7,7 @@ echo [1/3] 正在執行數據管線 (刷新當前賽事戰績並校驗入庫)...
 echo ==========================================================
 echo.
 
-call .venv\Scripts\python.exe -u run_pipeline.py --refresh-year 2026 --refresh-season 秋季
+call .venv\Scripts\python.exe -u run_pipeline.py --auto-current
 
 if errorlevel 1 (
     echo.

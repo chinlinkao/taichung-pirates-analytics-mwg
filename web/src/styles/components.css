@@ -3,6 +3,7 @@
 /* 1. 互動元件統一最小熱區與焦點外框 */
 :where(
     button,
+    a.btn,
     select,
     textarea,
     input:not([type="checkbox"], [type="radio"]),
@@ -63,6 +64,10 @@
 
 .btn-ghost:hover {
   background: var(--color-surface-muted);
+}
+
+.header-sync-link {
+  text-decoration: none;
 }
 
 .badge-count {

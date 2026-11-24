@@ -12,6 +12,7 @@ export type ResolvedTheme = "light" | "dark";
 export interface HeaderOptions {
   lastFetchedAt: string | null;
   activeFilterCount: number;
+  manualSyncUrl?: string;
   onOpenMobileFilters: () => void;
   onThemeChange?: (resolvedTheme: ResolvedTheme) => void;
 }
@@ -121,6 +122,30 @@ export function createHeader(options: HeaderOptions): HeaderController {
   updatedChip.title = "資料最後爬取時間（台灣時間 Asia/Taipei）";
   updatedChip.textContent = `更新：${formatTaipeiTimestamp(options.lastFetchedAt)}`;
 
+  // 僅限本機開發環境顯示的手動更新捷徑（正式建置由 Tree-Shaking 完全移除）
+  let syncLink: HTMLAnchorElement | null = null;
+  if (options.manualSyncUrl) {
+    syncLink = document.createElement("a");
+    syncLink.className = "btn header-sync-link";
+    syncLink.href = options.manualSyncUrl;
+    syncLink.target = "_blank";
+    syncLink.rel = "noopener noreferrer";
+    syncLink.title = "僅限本地端顯示：前往 GitHub Actions 手動觸發賽事數據更新（另開新分頁）";
+    syncLink.setAttribute(
+      "aria-label",
+      "手動更新賽事數據（前往 GitHub Actions，另開新分頁）"
+    );
+
+    const syncIcon = document.createElement("span");
+    syncIcon.setAttribute("aria-hidden", "true");
+    syncIcon.textContent = "🔄";
+
+    const syncText = document.createElement("span");
+    syncText.textContent = "手動更新";
+
+    syncLink.append(syncIcon, syncText);
+  }
+
   // 行動版篩選按鈕（含計數徽章）
   const mobileFilterBtn = document.createElement("button");
   mobileFilterBtn.type = "button";
@@ -219,7 +244,11 @@ export function createHeader(options: HeaderOptions): HeaderController {
   updateFilterBadge(options.activeFilterCount);
   syncThemeUi(false);
 
-  actions.append(updatedChip, mobileFilterBtn, themeBtn);
+  if (syncLink) {
+    actions.append(updatedChip, syncLink, mobileFilterBtn, themeBtn);
+  } else {
+    actions.append(updatedChip, mobileFilterBtn, themeBtn);
+  }
   inner.append(brandGroup, actions);
   header.append(inner);
 

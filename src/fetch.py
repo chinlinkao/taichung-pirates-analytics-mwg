@@ -52,6 +52,7 @@ def fetch_and_cache(
     refresh_season: Optional[str] = None,
     force: bool = False,
     target_team_id: Optional[int] = None,
+    total_count: Optional[int] = None,
 ) -> tuple[Path, bool]:
     """下載並快取單一球隊網頁。
 
@@ -74,13 +75,30 @@ def fetch_and_cache(
     if not need_download:
         return cache_file, False
 
-    print(f"[*] 正在下載: [{seed['csv_row_no']}/41] {seed['team_name']} ({seed['source_url']})...")
+    progress = (
+        f"[{seed['csv_row_no']}/{total_count}]"
+        if total_count is not None
+        else f"[{seed['csv_row_no']}]"
+    )
+    print(f"[*] 正在下載: {progress} {seed['team_name']} ({seed['source_url']})...")
     html_text = fetch_url(client, seed["source_url"])
 
-    with open(cache_file, "w", encoding="utf-8") as f:
-        f.write(html_text)
+    # 內容比對：僅在內容有實質變動或無快取時才寫入，避免無新賽果時變更 mtime
+    should_write = True
+    if cache_file.exists():
+        try:
+            existing_text = cache_file.read_text(encoding="utf-8")
+            if existing_text == html_text:
+                should_write = False
+                print("    (內容無異動，保留既有快取時間)")
+        except OSError:
+            should_write = True
 
-    # 禮貌等待 1.5 ~ 2.5 秒
+    if should_write:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            f.write(html_text)
+
+    # 禮貌等待 1.5 ~ 2.5 秒（每次發出請求皆必須等待）
     sleep_sec = random.uniform(1.5, 2.5)
     time.sleep(sleep_sec)
 
@@ -99,6 +117,7 @@ def fetch_all(
     if seeds is None:
         seeds = load_seeds(DEFAULT_CSV_PATH)
 
+    total_count = len(seeds)
     cache_dir.mkdir(parents=True, exist_ok=True)
     results: List[tuple[Dict[str, Any], Path]] = []
 
@@ -115,6 +134,7 @@ def fetch_all(
                 refresh_season=refresh_season,
                 force=force,
                 target_team_id=target_team_id,
+                total_count=total_count,
             )
             results.append((seed, cache_file))
             if downloaded:
@@ -129,11 +149,17 @@ def fetch_all(
 def main():
     parser = argparse.ArgumentParser(description="台中小海盜網頁快取下載器")
     parser.add_argument("--refresh-year", type=int, help="強制刷新指定年份賽事快取 (如 2026)")
+    parser.add_argument("--refresh-season", type=str, help="強制刷新指定賽季賽事快取 (如 '秋季')")
     parser.add_argument("--force", action="store_true", help="強制重新下載所有頁面")
     parser.add_argument("--team-id", type=int, help="僅重新下載特定 team_id")
     args = parser.parse_args()
 
-    fetch_all(refresh_year=args.refresh_year, force=args.force, target_team_id=args.team_id)
+    fetch_all(
+        refresh_year=args.refresh_year,
+        refresh_season=args.refresh_season,
+        force=args.force,
+        target_team_id=args.team_id,
+    )
 
 
 if __name__ == "__main__":
