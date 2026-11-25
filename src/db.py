@@ -132,6 +132,38 @@ CREATE TABLE IF NOT EXISTS matches (
     UNIQUE(team_id, match_date, match_time, away_team, home_team)
 );
 
+-- 8. YouTube 頻道海盜影片總表
+CREATE TABLE IF NOT EXISTS youtube_videos (
+    video_id            TEXT PRIMARY KEY,
+    channel_id          TEXT NOT NULL,
+    channel_handle      TEXT NOT NULL,
+    source_tab          TEXT,                     -- 'streams' | 'videos'
+    title               TEXT NOT NULL,
+    url                 TEXT NOT NULL,            -- https://www.youtube.com/watch?v={video_id}
+    duration_sec        INTEGER,
+    is_live_content     INTEGER,                  -- 1 | 0 | NULL
+    broadcast_start_utc TEXT,                     -- ISO8601 UTC
+    broadcast_date_iso  TEXT,                     -- 台灣時間 (UTC+8) YYYY-MM-DD
+    broadcast_time      TEXT,                     -- 台灣時間 (UTC+8) HH:MM
+    part_label          TEXT,                     -- 如 'Part 1', 'Part 2' 或 NULL
+    is_match_video      INTEGER NOT NULL DEFAULT 1, -- 1=比賽影片, 0=非比賽短片(MVP/SVP等)
+    fetched_at          TEXT
+);
+
+-- 9. 賽程與比賽影片多對多關聯表（支援單場多段影片與海盜內戰雙視角共用）
+CREATE TABLE IF NOT EXISTS match_videos (
+    match_id            INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    video_id            TEXT NOT NULL REFERENCES youtube_videos(video_id) ON DELETE CASCADE,
+    label               TEXT NOT NULL DEFAULT '比賽影片',
+    match_confidence    REAL,
+    match_source        TEXT NOT NULL DEFAULT 'auto', -- 'auto' | 'manual'
+    sort_order          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (match_id, video_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_match_videos_match_id ON match_videos(match_id);
+CREATE INDEX IF NOT EXISTS idx_match_videos_video_id ON match_videos(video_id);
+
 -- ============================================================
 -- 分析用 Views（支援跨屆動態重算率值，不受單頁四捨五入影響）
 -- ============================================================

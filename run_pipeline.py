@@ -27,6 +27,8 @@ from src.fetch import fetch_all
 from src.parse import parse_all
 from src.seed_loader import DEFAULT_CSV_PATH, load_seeds
 from src.verify import VerificationRunner
+from src.youtube_match import match_and_store_videos
+from src.youtube_sync import DEFAULT_YT_CACHE_PATH, sync_youtube_videos
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
@@ -68,6 +70,8 @@ def run_pipeline(
     refresh_season: Optional[str] = None,
     parse_only: bool = False,
     force: bool = False,
+    yt_full: bool = False,
+    skip_youtube: bool = False,
     db_path: Path | str = DEFAULT_DB_PATH,
     json_output: Path | str = DEFAULT_OUTPUT_PATH,
 ) -> bool:
@@ -78,7 +82,7 @@ def run_pipeline(
 
     # 0. 自動探索新賽事 (若指定 --discover)
     if discover:
-        print("\n>>> [階段 0/4] 自動探索 myscore.games 全新賽事與種子清單維護 (discovery.py)...")
+        print("\n>>> [階段 0/5] 自動探索 myscore.games 全新賽事與種子清單維護 (discovery.py)...")
         discover_pirate_links()
 
     # 若指定 --auto-current 且未明確指定年度與賽季，於 discover 後推算當季目標
@@ -88,17 +92,27 @@ def run_pipeline(
 
     # 1. 禮貌下載快取階段
     if not parse_only:
-        print("\n>>> [階段 1/4] 執行網頁快取檢查與下載 (fetch.py)...")
+        print("\n>>> [階段 1/5] 執行網頁快取檢查與下載 (fetch.py)...")
         fetch_all(refresh_year=refresh_year, refresh_season=refresh_season, force=force)
     else:
-        print("\n>>> [階段 1/4] 已指定 --parse-only，跳過網路下載。")
+        print("\n>>> [階段 1/5] 已指定 --parse-only，跳過網路下載。")
 
     # 2. 解析與入庫階段
-    print("\n>>> [階段 2/4] 執行 HTML 快取解析與資料庫入庫 (parse.py)...")
+    print("\n>>> [階段 2/5] 執行 HTML 快取解析與資料庫入庫 (parse.py)...")
     parse_all(db_path=db_path)
 
-    # 3. 自動化驗證階段
-    print("\n>>> [階段 3/4] 執行數據邏輯與完整性交叉驗算 (verify.py)...")
+    # 3. YouTube 比賽影片同步與賽程配對階段
+    print("\n>>> [階段 3/5] 執行 YouTube 比賽影片同步與賽程配對...")
+    if not parse_only and not skip_youtube:
+        sync_youtube_videos(cache_path=DEFAULT_YT_CACHE_PATH, full=yt_full)
+    elif parse_only:
+        print("  - 已指定 --parse-only，跳過 YouTube 網路同步，僅使用既有快取。")
+    else:
+        print("  - 已指定 --skip-youtube，跳過 YouTube 網路同步。")
+    match_and_store_videos(db_path=db_path, cache_path=DEFAULT_YT_CACHE_PATH)
+
+    # 4. 自動化驗證階段
+    print("\n>>> [階段 4/5] 執行數據邏輯與完整性交叉驗算 (verify.py)...")
     runner = VerificationRunner(db_path=db_path)
     success = runner.run_all()
 
@@ -106,8 +120,8 @@ def run_pipeline(
         print("\n[FAILED] 管線驗證失敗，已略過靜態 JSON 匯出，請檢查上述錯誤訊息！")
         return False
 
-    # 4. 匯出前端靜態 JSON 階段
-    print("\n>>> [階段 4/4] 匯出前端靜態 JSON (export_json.py)...")
+    # 5. 匯出前端靜態 JSON 階段
+    print("\n>>> [階段 5/5] 匯出前端靜態 JSON (export_json.py)...")
     export_json(db_path=db_path, output_path=json_output)
 
     print("\n[SUCCESS] 管線執行完畢，資料庫與前端靜態 JSON 皆已就緒！")
@@ -122,6 +136,8 @@ def main():
     parser.add_argument("--refresh-season", type=str, help="強制刷新指定賽季賽事快取 (如 '秋季')")
     parser.add_argument("--parse-only", action="store_true", help="跳過網路下載，直接使用既有快取解析入庫")
     parser.add_argument("--force", action="store_true", help="強制重新下載所有頁面快取")
+    parser.add_argument("--yt-full", action="store_true", help="完整掃描 YouTube 兩頻道歷史海盜影片")
+    parser.add_argument("--skip-youtube", action="store_true", help="跳過 YouTube 網路同步，僅使用本地快取配對")
     parser.add_argument("--db", type=str, default=str(DEFAULT_DB_PATH), help="指定 SQLite 資料庫路徑")
     parser.add_argument(
         "--json-output",
@@ -138,6 +154,8 @@ def main():
         refresh_season=args.refresh_season,
         parse_only=args.parse_only,
         force=args.force,
+        yt_full=args.yt_full,
+        skip_youtube=args.skip_youtube,
         db_path=args.db,
         json_output=args.json_output,
     )

@@ -41,6 +41,23 @@ function createKpiCard(labelText: string): {
   return { card, valueEl, subEl };
 }
 
+function createPlayIconSvg(): SVGSVGElement {
+  const svgNs = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNs, "svg");
+  svg.setAttribute("class", "ext-link-icon");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+
+  const path = document.createElementNS(svgNs, "path");
+  path.setAttribute("fill", "currentColor");
+  path.setAttribute("d", "M4.25 3.2v9.6L12.5 8 4.25 3.2Z");
+  svg.append(path);
+  return svg;
+}
+
 function createExternalLinksCell(row: MatchViewRow): Node {
   const links: Array<{ label: string; url: string }> = [];
   if (row.boxscoreUrl) {
@@ -53,7 +70,7 @@ function createExternalLinksCell(row: MatchViewRow): Node {
     links.push({ label: "戰況表", url: row.summaryUrl });
   }
 
-  if (links.length === 0) {
+  if (links.length === 0 && row.youtubeVideos.length === 0) {
     return document.createTextNode("-");
   }
 
@@ -67,6 +84,21 @@ function createExternalLinksCell(row: MatchViewRow): Node {
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     a.textContent = `${item.label} ↗`;
+    wrap.append(a);
+  }
+
+  for (const video of row.youtubeVideos) {
+    const a = document.createElement("a");
+    a.className = "ext-link ext-link--video";
+    a.href = video.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.title = video.title;
+    a.setAttribute(
+      "aria-label",
+      `${video.label}：${video.title}（開啟新分頁）`
+    );
+    a.append(createPlayIconSvg(), document.createTextNode(`${video.label} ↗`));
     wrap.append(a);
   }
   return wrap;
@@ -159,7 +191,7 @@ const MATCH_COLUMNS: readonly TableColumn<MatchViewRow>[] = [
   },
   {
     key: "links",
-    label: "官網戰況連結",
+    label: "官網戰況與影片連結",
     type: "string",
     sortable: false,
     renderCell: (r) => createExternalLinksCell(r),
@@ -213,7 +245,7 @@ export function createOpponentsView(
 
   // 3. 對戰賽程明細表
   const table = createDataTable<MatchViewRow>({
-    caption: "賽程戰果與外部戰況連結明細表",
+    caption: "賽程戰果、官網戰況與比賽影片連結明細表",
     columns: MATCH_COLUMNS,
     rows: [],
     emptyMessage: "目前篩選條件下無符合的賽程紀錄。",

@@ -207,11 +207,40 @@ def build_dataset(conn: sqlite3.Connection) -> dict[str, Any]:
         """
     ).fetchall()
 
+    videos_by_match_id: dict[int, list[dict[str, Any]]] = {}
+    has_mv_table = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='match_videos';"
+    ).fetchone()[0]
+    matched_video_ids: set[str] = set()
+    if has_mv_table:
+        mv_rows = conn.execute(
+            """
+            SELECT mv.match_id, yv.video_id, yv.url, yv.title, mv.label
+            FROM match_videos mv
+            JOIN youtube_videos yv ON mv.video_id = yv.video_id
+            ORDER BY mv.match_id ASC, mv.sort_order ASC, mv.video_id ASC;
+            """
+        ).fetchall()
+        for mv in mv_rows:
+            matched_video_ids.add(mv["video_id"])
+            videos_by_match_id.setdefault(mv["match_id"], []).append(
+                {
+                    "video_id": mv["video_id"],
+                    "url": mv["url"],
+                    "title": mv["title"],
+                    "label": mv["label"],
+                }
+            )
+
     matches: list[dict[str, Any]] = []
+    matches_with_video = 0
     for row in raw_matches:
         pirate_side, opponent_team = resolve_pirate_side(
             row["team_name"], row["away_team"], row["home_team"]
         )
+        yt_list = videos_by_match_id.get(row["id"], [])
+        if yt_list:
+            matches_with_video += 1
         matches.append(
             {
                 "id": row["id"],
@@ -230,6 +259,7 @@ def build_dataset(conn: sqlite3.Connection) -> dict[str, Any]:
                 "boxscore_url": row["boxscore_url"],
                 "pbp_url": row["pbp_url"],
                 "summary_url": row["summary_url"],
+                "youtube_videos": yt_list,
             }
         )
 
@@ -248,6 +278,8 @@ def build_dataset(conn: sqlite3.Connection) -> dict[str, Any]:
                 "teams": len(teams),
                 "players": len(players),
                 "matches": len(matches),
+                "youtube_videos": len(matched_video_ids),
+                "matches_with_video": matches_with_video,
             },
             "filter_options": {
                 "age_groups": _sort_options((r["age_group"] for r in leagues), AGE_GROUP_ORDER),

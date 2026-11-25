@@ -726,6 +726,7 @@ export function computeOpponents(
       boxscoreUrl: match.boxscore_url,
       pbpUrl: match.pbp_url,
       summaryUrl: match.summary_url,
+      youtubeVideos: match.youtube_videos ?? [],
     });
   }
 

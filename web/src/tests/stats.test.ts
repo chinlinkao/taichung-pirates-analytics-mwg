@@ -212,6 +212,7 @@ describe("棒球數據模型鐵則與邊界案例", () => {
       boxscore_url: null,
       pbp_url: null,
       summary_url: null,
+      youtube_videos: [],
     };
     const blackPerspective: MatchRecord = {
       ...whitePerspective,
@@ -319,5 +320,53 @@ describe("CSV 匯出與 URL Query 狀態同步", () => {
     const emptyAge = parseStateFromSearch("?age=", dataset);
     expect(emptyAge.filters.ageGroups).toEqual([]);
     expect(serializeStateToSearch(emptyAge, dataset)).toContain("age=");
+  });
+});
+
+describe("YouTube 比賽影片連結資料完整性與賽程視角整合", () => {
+  it("靜態資料內含合規的比賽影片連結，且 computeOpponents 正確映射 youtubeVideos", () => {
+    const withVideos = dataset.matches.filter(
+      (m) => Array.isArray(m.youtube_videos) && m.youtube_videos.length > 0
+    );
+    expect(withVideos.length).toBeGreaterThan(0);
+
+    for (const match of withVideos) {
+      for (const v of match.youtube_videos ?? []) {
+        expect(v.video_id.length).toBeGreaterThan(0);
+        expect(v.url).toMatch(/^https:\/\/www\.youtube\.com\/watch\?v=/);
+        expect(v.title.length).toBeGreaterThan(0);
+        expect(v.label.length).toBeGreaterThan(0);
+      }
+    }
+
+    const oppSummary = computeOpponents(dataset, allTeamIds, null, index);
+    const viewWithVideos = oppSummary.matches.filter(
+      (m) => m.youtubeVideos.length > 0
+    );
+    expect(viewWithVideos.length).toBe(withVideos.length);
+  });
+
+  it("海盜內戰賽程若有對應比賽影片，白隊與黑隊雙視角皆保有相同影片連結", () => {
+    const byBoxUrl = new Map<string, MatchRecord[]>();
+    for (const m of dataset.matches) {
+      if (
+        m.boxscore_url &&
+        m.away_team.includes("海盜") &&
+        m.home_team.includes("海盜")
+      ) {
+        const list = byBoxUrl.get(m.boxscore_url) ?? [];
+        list.push(m);
+        byBoxUrl.set(m.boxscore_url, list);
+      }
+    }
+
+    for (const pair of byBoxUrl.values()) {
+      if (pair.length < 2) continue;
+      const firstIds = (pair[0]?.youtube_videos ?? []).map((v) => v.video_id);
+      for (const other of pair.slice(1)) {
+        const otherIds = (other.youtube_videos ?? []).map((v) => v.video_id);
+        expect(otherIds).toEqual(firstIds);
+      }
+    }
   });
 });

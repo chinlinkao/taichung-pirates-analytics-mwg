@@ -61,6 +61,7 @@ class VerificationRunner:
             self.check_cross_season_progression(conn)
             self.check_baseball_logic_and_stats(conn)
             self.check_views_and_aggregations(conn)
+            self.check_youtube_videos(conn)
 
             print("=" * 60)
             if self.passed:
@@ -340,6 +341,100 @@ class VerificationRunner:
         c.execute("SELECT COUNT(*), SUM(total_outs), SUM(w) FROM v_player_career_pitching;")
         p_career = c.fetchone()
         self.log_success(f"投手生涯總表 View: 共有 {p_career[0]} 位生涯投手，累計投球 {p_career[1]} 個出局數，{p_career[2]} 勝")
+
+    def check_youtube_videos(self, conn: sqlite3.Connection):
+        print("\n[6/6] 檢查 YouTube 比賽影片連結與賽程關聯 (YouTube Videos Check)...")
+        c = conn.cursor()
+
+        c.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('youtube_videos', 'match_videos');"
+        )
+        if c.fetchone()[0] < 2:
+            self.log_warning("資料庫尚未建立 youtube_videos / match_videos 表，略過影片檢查")
+            return
+
+        c.execute("SELECT COUNT(*) FROM youtube_videos WHERE is_match_video = 1;")
+        match_video_cnt = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM youtube_videos WHERE is_match_video = 0;")
+        excluded_cnt = c.fetchone()[0]
+
+        if match_video_cnt == 0:
+            self.log_warning("youtube_videos 尚無比賽影片資料，請先執行 src/youtube_sync.py")
+            return
+
+        # 1. 檢查所有影片 URL 格式
+        c.execute(
+            "SELECT COUNT(*) FROM youtube_videos WHERE url NOT LIKE 'https://www.youtube.com/watch?v=%';"
+        )
+        bad_url_cnt = c.fetchone()[0]
+        if bad_url_cnt == 0:
+            self.log_success(f"影片網址格式驗證: 全部 {match_video_cnt + excluded_cnt} 筆皆為合法 YouTube 連結")
+        else:
+            self.log_error(f"發現 {bad_url_cnt} 筆不合法的 YouTube 連結格式！")
+
+        # 2. 檢查自動配對未混入 < 180 秒或非比賽短片
+        c.execute(
+            """
+            SELECT COUNT(*)
+            FROM match_videos mv
+            JOIN youtube_videos yv ON mv.video_id = yv.video_id
+            WHERE mv.match_source = 'auto'
+              AND (yv.is_match_video = 0 OR (yv.duration_sec IS NOT NULL AND yv.duration_sec < 180));
+            """
+        )
+        bad_auto_cnt = c.fetchone()[0]
+        if bad_auto_cnt == 0:
+            self.log_success("比賽影片品質防呆: 自動配對未混入 MVP/SVP 短片 (<180s)")
+        else:
+            self.log_error(f"自動配對混入 {bad_auto_cnt} 筆非比賽短片或小於 180 秒之影片！")
+
+        # 3. 檢查海盜內戰雙視角影片一致性（同 boxscore_url 的雙邊賽程應有相同影片集合）
+        c.execute(
+            """
+            SELECT m.boxscore_url, COUNT(DISTINCT m.id) AS match_cnt,
+                   COUNT(DISTINCT COALESCE(mv.video_id, '')) AS distinct_sets
+            FROM matches m
+            LEFT JOIN match_videos mv ON m.id = mv.match_id
+            WHERE m.boxscore_url IS NOT NULL
+            GROUP BY m.boxscore_url
+            HAVING match_cnt > 1;
+            """
+        )
+        civil_inconsistent = 0
+        for row in c.fetchall():
+            # 逐一驗證同 boxscore_url 下各 match_id 綁定到的 video_id 清單一致
+            m_ids = [
+                r[0]
+                for r in c.execute(
+                    "SELECT id FROM matches WHERE boxscore_url = ?;", (row["boxscore_url"],)
+                ).fetchall()
+            ]
+            sets = [
+                tuple(
+                    r[0]
+                    for r in c.execute(
+                        "SELECT video_id FROM match_videos WHERE match_id = ? ORDER BY video_id;",
+                        (mid,),
+                    ).fetchall()
+                )
+                for mid in m_ids
+            ]
+            if len(set(sets)) > 1:
+                civil_inconsistent += 1
+
+        if civil_inconsistent == 0:
+            self.log_success("海盜內戰影片一致性: 同場次雙隊視角綁定完全同步")
+        else:
+            self.log_error(f"海盜內戰有 {civil_inconsistent} 場次雙視角影片不一致！")
+
+        # 4. 覆蓋率統計
+        c.execute("SELECT COUNT(DISTINCT match_id), COUNT(*), COUNT(DISTINCT video_id) FROM match_videos;")
+        linked_matches, total_links, linked_videos = c.fetchone()
+        total_matches = c.execute("SELECT COUNT(*) FROM matches;").fetchone()[0]
+        self.log_success(
+            f"已收錄 {match_video_cnt} 支海盜比賽影片（排除短片 {excluded_cnt} 支），"
+            f"成功配對 {linked_videos} 支 -> {linked_matches}/{total_matches} 筆賽程列（共 {total_links} 筆關聯）"
+        )
 
 
 def main():

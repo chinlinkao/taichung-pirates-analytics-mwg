@@ -94,6 +94,13 @@ export interface PitchingStatRecord {
   er: number;
 }
 
+export interface MatchYoutubeVideo {
+  video_id: string;
+  url: string;
+  title: string;
+  label: string;
+}
+
 export interface MatchRecord {
   id: number;
   team_id: number;
@@ -112,6 +119,7 @@ export interface MatchRecord {
   boxscore_url: string | null;
   pbp_url: string | null;
   summary_url: string | null;
+  youtube_videos?: MatchYoutubeVideo[];
 }
 
 export interface CareerBattingBenchmark {
@@ -145,6 +153,8 @@ export interface PiratesDataset {
       teams: number;
       players: number;
       matches: number;
+      youtube_videos?: number;
+      matches_with_video?: number;
     };
     filter_options: {
       age_groups: AgeGroup[];
@@ -310,6 +320,7 @@ export interface MatchViewRow {
   boxscoreUrl: string | null;
   pbpUrl: string | null;
   summaryUrl: string | null;
+  youtubeVideos: MatchYoutubeVideo[];
 }
 
 export interface OpponentSummary {

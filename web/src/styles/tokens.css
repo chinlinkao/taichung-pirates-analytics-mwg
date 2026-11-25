@@ -53,6 +53,13 @@
   --tie-light: #526071;
   --tie-dark: #94a3b8;
 
+  --video-accent-light: #b42318;
+  --video-accent-dark: #fca5a5;
+  --video-soft-light: #fef2f2;
+  --video-soft-dark: #33191d;
+  --video-border-light: #f3b8b8;
+  --video-border-dark: #7f2934;
+
   --focus-ring-light: #005fcc;
   --focus-ring-dark: #ffd45e;
 
@@ -80,6 +87,9 @@
   --color-win: var(--win-light);
   --color-loss: var(--loss-light);
   --color-tie: var(--tie-light);
+  --color-video-accent: var(--video-accent-light);
+  --color-video-soft: var(--video-soft-light);
+  --color-video-border: var(--video-border-light);
   --color-focus-ring: var(--focus-ring-light);
   --color-scrollbar-track: var(--scrollbar-track-light);
   --color-scrollbar-thumb: var(--scrollbar-thumb-light);
@@ -117,6 +127,9 @@
     --color-win: var(--win-dark);
     --color-loss: var(--loss-dark);
     --color-tie: var(--tie-dark);
+    --color-video-accent: var(--video-accent-dark);
+    --color-video-soft: var(--video-soft-dark);
+    --color-video-border: var(--video-border-dark);
     --color-focus-ring: var(--focus-ring-dark);
     --color-scrollbar-track: var(--scrollbar-track-dark);
     --color-scrollbar-thumb: var(--scrollbar-thumb-dark);
@@ -139,6 +152,9 @@
   --color-win: var(--win-dark);
   --color-loss: var(--loss-dark);
   --color-tie: var(--tie-dark);
+  --color-video-accent: var(--video-accent-dark);
+  --color-video-soft: var(--video-soft-dark);
+  --color-video-border: var(--video-border-dark);
   --color-focus-ring: var(--focus-ring-dark);
   --color-scrollbar-track: var(--scrollbar-track-dark);
   --color-scrollbar-thumb: var(--scrollbar-thumb-dark);
@@ -162,6 +178,9 @@
     --color-win: light-dark(var(--win-light), var(--win-dark));
     --color-loss: light-dark(var(--loss-light), var(--loss-dark));
     --color-tie: light-dark(var(--tie-light), var(--tie-dark));
+    --color-video-accent: light-dark(var(--video-accent-light), var(--video-accent-dark));
+    --color-video-soft: light-dark(var(--video-soft-light), var(--video-soft-dark));
+    --color-video-border: light-dark(var(--video-border-light), var(--video-border-dark));
     --color-focus-ring: light-dark(var(--focus-ring-light), var(--focus-ring-dark));
     --color-scrollbar-track: light-dark(var(--scrollbar-track-light), var(--scrollbar-track-dark));
     --color-scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));

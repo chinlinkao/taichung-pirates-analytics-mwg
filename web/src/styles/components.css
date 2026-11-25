@@ -775,6 +775,22 @@ table.data-table tbody th.is-sticky-col {
   color: var(--color-accent-text);
 }
 
+.ext-link--video {
+  border-color: var(--color-video-border);
+  background: var(--color-video-soft);
+  color: var(--color-video-accent);
+}
+
+.ext-link--video:hover {
+  border-color: var(--color-video-accent);
+  color: var(--color-video-accent);
+  filter: brightness(0.96);
+}
+
+.ext-link-icon {
+  flex: none;
+}
+
 .skeleton-shell {
   max-inline-size: 1320px;
   margin-inline: auto;

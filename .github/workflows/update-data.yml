@@ -153,7 +153,15 @@ jobs:
           else:
               print("今日無新賽事或數據變動，略過提交與重部署。")
               subprocess.run(
-                  ["git", "checkout", "--", "data/pirates.db", "web/public/data/pirates.json"],
+                  [
+                      "git",
+                      "checkout",
+                      "--",
+                      "data/pirates.db",
+                      "web/public/data/pirates.json",
+                      "data/youtube_videos.json",
+                      "data/youtube_match_mapping_report.csv",
+                  ],
                   check=False,
               )
               write_output("data_changed", "false")
@@ -165,7 +173,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "data/pirates.db" "data/海盜隊網頁標題.csv" "web/public/data/pirates.json"
+          git add -- "data/pirates.db" "data/海盜隊網頁標題.csv" "web/public/data/pirates.json" "data/youtube_videos.json" "data/youtube_match_mapping_report.csv"
+          if [ -f "data/youtube_manual_overrides.csv" ]; then
+            git add -- "data/youtube_manual_overrides.csv"
+          fi
           git commit -m "chore(data): 自動同步最新賽事數據 [skip ci]"
           git pull --rebase origin main
           git push origin main
