@@ -66,7 +66,7 @@ npm run build       # Vite 正式環境靜態打包 (輸出至 web/dist)
 ├── .github/
 │   └── workflows/
 │       ├── deploy-web.yml         # GitHub Actions 自動建置 web/ 並部署 GitHub Pages
-│       └── update-data.yml        # 每日 11:00 自動同步賽事數據並串接 Pages 部署
+│       └── update-data.yml        # 每日 09:41 自動同步賽事數據並串接 Pages 部署
 ├── .gitignore                     # 忽略 .venv、data/raw_html、web/node_modules 等
 ├── AGENTS.md                      # 專案規範、棒球數據模型鐵則與驗證閘道
 ├── IMPLEMENTATION_PLAN_MWG.md     # MWG 現代前端遷移實行計畫
@@ -105,7 +105,7 @@ npm run build       # Vite 正式環境靜態打包 (輸出至 web/dist)
 
 本儲存庫已內建自動化雙工作流程：
 1. **每日自動排程（[.github/workflows/update-data.yml](.github/workflows/update-data.yml)）**：
-   - 每天 **台灣時間 11:00（UTC 03:00）** 自動啟動管線，依當前時間自動推算當季年度與賽季（`--auto-current`），並透過 `actions/cache` 保存歷史 `data/raw_html/` 快取。
+   - 每天 **台灣時間 09:41（UTC 01:41）** 自動啟動管線，依當前時間自動推算當季年度與賽季（`--auto-current`），並透過 `actions/cache` 保存歷史 `data/raw_html/` 快取。
    - **僅在賽事／統計／名單有實質異動時**才會提交 `data/pirates.db`、`data/海盜隊網頁標題.csv` 與 `web/public/data/pirates.json` 至 `main`，並自動呼叫 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) 重建與發布 GitHub Pages。
    - 亦支援 **Run workflow** 手動觸發，可指定 `refresh_year`、`refresh_season`，或勾選 `discover`（探索新賽事網址，等同雲端版 `update_full_discovery.bat`）與 `force`（全量重抓快取）。
 2. **本地端限定手動更新入口**：

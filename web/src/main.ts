@@ -202,7 +202,7 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
 
   const footerRight = document.createElement("span");
   footerRight.textContent =
-    "每日 11:00 自動同步｜純靜態資料檢視・依 player_uid 跨屆歸戶・投球局數以整數出局數累積";
+    "每日 09:41 自動同步｜純靜態資料檢視・依 player_uid 跨屆歸戶・投球局數以整數出局數累積";
 
   footer.append(footerLeft, footerRight);
 

@@ -2,8 +2,8 @@ name: 每日自動同步賽事數據並部署看板
 
 on:
   schedule:
-    # UTC 03:00 = 台灣時間 (Asia/Taipei, UTC+8) 每日早上 11:00
-    - cron: "0 3 * * *"
+    # UTC 01:41 = 台灣時間 (Asia/Taipei, UTC+8) 每日早上 09:41（錯開整點尖峰）
+    - cron: "41 1 * * *"
   workflow_dispatch:
     inputs:
       refresh_year:
