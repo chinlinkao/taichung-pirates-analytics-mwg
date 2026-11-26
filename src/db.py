@@ -164,6 +164,83 @@ CREATE TABLE IF NOT EXISTS match_videos (
 CREATE INDEX IF NOT EXISTS idx_match_videos_match_id ON match_videos(match_id);
 CREATE INDEX IF NOT EXISTS idx_match_videos_video_id ON match_videos(video_id);
 
+-- 10. 單場先發打序與守備位置（對應 show_text.php）
+CREATE TABLE IF NOT EXISTS match_lineups (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id        INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    team_id         INTEGER NOT NULL REFERENCES teams(team_id),
+    player_uid      TEXT REFERENCES players(player_uid),
+    masked_name     TEXT NOT NULL,
+    batting_order   TEXT NOT NULL,
+    position        TEXT NOT NULL,
+    UNIQUE(match_id, team_id, batting_order, masked_name)
+);
+
+-- 11. 單場逐半局文字事件明細（對應 show_text.php）
+CREATE TABLE IF NOT EXISTS match_events (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id            INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    inning              INTEGER NOT NULL,
+    half_side           TEXT NOT NULL CHECK (half_side IN ('TOP', 'BOT')),
+    event_index         INTEGER NOT NULL,
+    event_type          TEXT NOT NULL,
+    batter_uid          TEXT REFERENCES players(player_uid),
+    batter_name         TEXT,
+    pitcher_uid         TEXT REFERENCES players(player_uid),
+    pitcher_name        TEXT,
+    outs_before         INTEGER NOT NULL DEFAULT 0,
+    outs_delta          INTEGER NOT NULL DEFAULT 0,
+    runs_scored         INTEGER NOT NULL DEFAULT 0,
+    involved_positions  TEXT,
+    event_text          TEXT NOT NULL,
+    UNIQUE(match_id, inning, half_side, event_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_match_events_match ON match_events(match_id);
+
+-- 12. 影片 Scorebug 半局時間軸快取摘要（軌道 A）
+CREATE TABLE IF NOT EXISTS video_scorebug_segments (
+    video_id        TEXT NOT NULL REFERENCES youtube_videos(video_id) ON DELETE CASCADE,
+    inning          INTEGER NOT NULL,
+    half_side       TEXT NOT NULL CHECK (half_side IN ('TOP', 'BOT')),
+    start_sec       INTEGER NOT NULL,
+    end_sec         INTEGER NOT NULL,
+    sample_count    INTEGER NOT NULL DEFAULT 0,
+    is_interpolated INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (video_id, inning, half_side)
+);
+
+-- 13. 影片語音逐字稿關鍵分段摘要（軌道 B，入庫前遮罩姓名）
+CREATE TABLE IF NOT EXISTS video_transcript_segments (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id        TEXT NOT NULL REFERENCES youtube_videos(video_id) ON DELETE CASCADE,
+    start_sec       REAL NOT NULL,
+    end_sec         REAL NOT NULL,
+    text_masked     TEXT NOT NULL,
+    matched_uid     TEXT REFERENCES players(player_uid)
+);
+
+-- 14. 球員影片片段對齊主表（第五頁籤資料來源）
+CREATE TABLE IF NOT EXISTS player_video_clips (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id        INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    player_uid      TEXT NOT NULL REFERENCES players(player_uid),
+    video_id        TEXT NOT NULL REFERENCES youtube_videos(video_id) ON DELETE CASCADE,
+    clip_type       TEXT NOT NULL CHECK (clip_type IN ('batting', 'pitching', 'fielding')),
+    inning          INTEGER NOT NULL,
+    half_side       TEXT NOT NULL CHECK (half_side IN ('TOP', 'BOT')),
+    event_index     INTEGER NOT NULL,
+    label_short     TEXT NOT NULL,
+    event_detail    TEXT NOT NULL,
+    start_sec       INTEGER NOT NULL,
+    align_method    TEXT NOT NULL,
+    confidence      TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+    UNIQUE(match_id, player_uid, clip_type, inning, half_side, event_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_video_clips_uid ON player_video_clips(player_uid);
+CREATE INDEX IF NOT EXISTS idx_player_video_clips_match ON player_video_clips(match_id);
+
 -- ============================================================
 -- 分析用 Views（支援跨屆動態重算率值，不受單頁四捨五入影響）
 -- ============================================================

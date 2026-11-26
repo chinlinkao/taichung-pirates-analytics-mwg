@@ -41,6 +41,7 @@ import type { EraInnings, PiratesDataset } from "../types/data";
 
 export interface PlayerProfileViewOptions {
   onSelectPlayer: (playerUid: string) => void;
+  onOpenPlayerClips?: (playerUid: string) => void;
 }
 
 export interface PlayerProfileViewController {
@@ -122,6 +123,18 @@ export function createPlayerProfileView(
   const shareGroup = document.createElement("div");
   shareGroup.className = "toolbar-group";
 
+  let currentEffectiveUid: string | null = null;
+  const clipsBtn = document.createElement("button");
+  clipsBtn.type = "button";
+  clipsBtn.className = "btn";
+  clipsBtn.textContent = "🎬 查看影片集合";
+  clipsBtn.hidden = !options.onOpenPlayerClips;
+  clipsBtn.addEventListener("click", () => {
+    if (currentEffectiveUid && options.onOpenPlayerClips) {
+      options.onOpenPlayerClips(currentEffectiveUid);
+    }
+  });
+
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.className = "btn btn-primary";
@@ -156,7 +169,7 @@ export function createPlayerProfileView(
     }, 2600);
   });
 
-  shareGroup.append(copyBtn, copyStatus);
+  shareGroup.append(clipsBtn, copyBtn, copyStatus);
   topControls.append(comboboxHost, shareGroup);
 
   // 2. 球員履歷摘要卡
@@ -274,6 +287,8 @@ export function createPlayerProfileView(
       }
 
       if (!effectiveUid) {
+        currentEffectiveUid = null;
+        clipsBtn.disabled = true;
         profileCard.hidden = true;
         chartsContainer.hidden = true;
         battingTable.element.hidden = true;
@@ -283,6 +298,8 @@ export function createPlayerProfileView(
         return;
       }
 
+      currentEffectiveUid = effectiveUid;
+      clipsBtn.disabled = false;
       profileCard.hidden = false;
       const history = getPlayerHistory(
         dataset,

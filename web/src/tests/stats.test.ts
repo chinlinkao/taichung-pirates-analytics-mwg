@@ -31,7 +31,7 @@ import {
   parseStateFromSearch,
   serializeStateToSearch,
 } from "../core/store";
-import { COACH_PITCH_UID, type MatchRecord, type PiratesDataset } from "../types/data";
+import { COACH_PITCH_UID, type MatchRecord, type PiratesDataset, type PlayerClipsDataset } from "../types/data";
 
 const jsonPath = resolve(process.cwd(), "public/data/pirates.json");
 const dataset = JSON.parse(readFileSync(jsonPath, "utf-8")) as PiratesDataset;
@@ -366,6 +366,48 @@ describe("YouTube 比賽影片連結資料完整性與賽程視角整合", () =>
       for (const other of pair.slice(1)) {
         const otherIds = (other.youtube_videos ?? []).map((v) => v.video_id);
         expect(otherIds).toEqual(firstIds);
+      }
+    }
+  });
+});
+
+describe("第五頁籤：球員影片集合靜態資料與 URL 狀態同步", () => {
+  it("URL Query 可精準還原並序列化 ?tab=clips&uid=...", () => {
+    const parsed = parseStateFromSearch(
+      "?tab=clips&uid=%E9%AB%98%E3%80%87%E5%B1%95_2015-10",
+      dataset
+    );
+    expect(parsed.tab).toBe("clips");
+    expect(parsed.selectedPlayerUid).toBe("高〇展_2015-10");
+
+    const search = serializeStateToSearch(parsed, dataset);
+    expect(search).toContain("tab=clips");
+    expect(search).toContain("uid=");
+    expect(parseStateFromSearch(search, dataset)).toEqual(parsed);
+  });
+
+  it("player-clips.json 結構合規、排除教練拋打並包含合法秒數連結", () => {
+    const clipsJsonPath = resolve(process.cwd(), "public/data/player-clips.json");
+    const clipsData = JSON.parse(readFileSync(clipsJsonPath, "utf-8")) as PlayerClipsDataset;
+
+    expect(clipsData.schema_version).toBe("1.0.0");
+    expect(clipsData.meta.counts.players_with_clips).toBeGreaterThan(0);
+    expect(clipsData.players[COACH_PITCH_UID]).toBeUndefined();
+
+    const gao = clipsData.players["高〇展_2015-10"];
+    expect(gao).toBeDefined();
+    expect(gao?.total_matches).toBe(4);
+    expect(gao?.total_batting).toBe(8);
+    expect(gao?.total_pitching).toBe(5);
+
+    for (const p of Object.values(clipsData.players)) {
+      for (const m of p.matches) {
+        const allClips = [...m.batting_clips, ...m.pitching_clips, ...m.fielding_clips];
+        for (const c of allClips) {
+          expect(c.start_sec).toBeGreaterThanOrEqual(0);
+          expect(c.youtube_url).toMatch(/^https:\/\/www\.youtube\.com\/watch\?v=[^&]+&t=\d+s$/);
+          expect(["high", "medium", "low"]).toContain(c.confidence);
+        }
       }
     }
   });

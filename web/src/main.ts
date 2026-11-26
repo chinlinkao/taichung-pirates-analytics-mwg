@@ -23,13 +23,18 @@ import {
   getFilteredTeamIds,
 } from "./core/filters";
 import { AppStore } from "./core/store";
-import type { AppState, PiratesDataset } from "./types/data";
+import type { AppState, PiratesDataset, PlayerClipsDataset } from "./types/data";
 import { createLeaderboardsView } from "./views/leaderboards";
 import { createOpponentsView } from "./views/opponents";
 import { createOverviewView } from "./views/overview";
+import {
+  createPlayerClipsView,
+  type PlayerClipsViewState,
+} from "./views/player-clips";
 import { createPlayerProfileView } from "./views/player-profile";
 
 const DATA_URL = "./data/pirates.json";
+const CLIPS_DATA_URL = "./data/player-clips.json";
 const LOCAL_MANUAL_SYNC_URL = import.meta.env.DEV
   ? "https://github.com/chinlinkao/taichung-pirates-analytics-mwg/actions/workflows/update-data.yml"
   : undefined;
@@ -124,10 +129,72 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
     onSelectPlayer: (playerUid) => {
       store.setState({ selectedPlayerUid: playerUid });
     },
+    onOpenPlayerClips: (playerUid) => {
+      store.setState({
+        tab: "clips",
+        selectedPlayerUid: playerUid,
+      });
+    },
   });
   const opponentsView = createOpponentsView({
     onSelectOpponent: (opponent) => {
       store.setState({ selectedOpponent: opponent });
+    },
+  });
+
+  let clipsState: PlayerClipsViewState = {
+    status: "idle",
+    clipsDataset: null,
+    errorMessage: null,
+  };
+  let clipsPromise: Promise<void> | null = null;
+
+  const ensureClipsLoaded = (forceRetry = false): void => {
+    if (clipsState.status === "ready") return;
+    if (clipsPromise && !forceRetry) return;
+    if (forceRetry) {
+      clipsPromise = null;
+    }
+
+    clipsState = { status: "loading", clipsDataset: null, errorMessage: null };
+    clipsPromise = fetch(CLIPS_DATA_URL, { cache: "no-cache" })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          throw new Error(`讀取球員影片集合資料失敗（HTTP ${resp.status}）`);
+        }
+        const data = (await resp.json()) as PlayerClipsDataset;
+        if (!data || !data.players) {
+          throw new Error("球員影片集合資料格式不符");
+        }
+        clipsState = {
+          status: "ready",
+          clipsDataset: data,
+          errorMessage: null,
+        };
+      })
+      .catch((err: unknown) => {
+        clipsPromise = null;
+        clipsState = {
+          status: "error",
+          clipsDataset: null,
+          errorMessage:
+            err instanceof Error ? err.message : "載入影片資料時發生未知錯誤。",
+        };
+      })
+      .finally(() => {
+        if (store.getState().tab === "clips") {
+          renderState(store.getState());
+        }
+      });
+  };
+
+  const playerClipsView = createPlayerClipsView({
+    onSelectPlayer: (playerUid) => {
+      store.setState({ selectedPlayerUid: playerUid });
+    },
+    onRetryLoad: () => {
+      ensureClipsLoaded(true);
+      renderState(store.getState());
     },
   });
 
@@ -166,6 +233,7 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
   tabs.getPanelContentElement("leaderboards").append(leaderboardsView.element);
   tabs.getPanelContentElement("player").append(playerProfileView.element);
   tabs.getPanelContentElement("opponents").append(opponentsView.element);
+  tabs.getPanelContentElement("clips").append(playerClipsView.element);
 
   // 無符合隊伍時之防呆提示
   const emptyBanner = document.createElement("section");
@@ -252,6 +320,16 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
       case "opponents":
         opponentsView.update(
           computeOpponents(dataset, teamIds, state.selectedOpponent, index)
+        );
+        break;
+      case "clips":
+        ensureClipsLoaded(false);
+        playerClipsView.update(
+          dataset,
+          teamIds,
+          state.selectedPlayerUid,
+          index,
+          clipsState
         );
         break;
       default:

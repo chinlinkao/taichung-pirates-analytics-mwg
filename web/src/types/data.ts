@@ -13,8 +13,93 @@ export type TournamentType = "例行賽" | "季後賽" | "台灣大賽";
 export type Division = "大聯盟" | "小聯盟" | "一般";
 
 export type EraInnings = 7 | 9;
-export type TabId = "overview" | "leaderboards" | "player" | "opponents";
+export type TabId = "overview" | "leaderboards" | "player" | "opponents" | "clips";
 export type LeaderboardMode = "career" | "season";
+
+export type ClipType = "batting" | "pitching" | "fielding";
+export type ClipConfidence = "high" | "medium" | "low";
+export type ClipAlignMethod =
+  | "dual_track"
+  | "scorebug_anchor"
+  | "scorebug_bs_reset"
+  | "scorebug_half_start"
+  | "scorebug_reliever_entry"
+  | "scorebug_anchor_interp"
+  | "scorebug_half_interp"
+  | "bracket_interp"
+  | "manual";
+
+export interface PlayerClipItem {
+  id: number;
+  video_id: string;
+  inning: number;
+  half_side: "TOP" | "BOT";
+  half_label: string;
+  event_index: number;
+  label_short: string;
+  event_detail: string;
+  start_sec: number;
+  time_display: string;
+  youtube_url: string;
+  align_method: ClipAlignMethod;
+  confidence: ClipConfidence;
+}
+
+export interface PlayerClipMatchRecord {
+  match_id: number;
+  team_id: number;
+  league_id: number;
+  league_title: string;
+  team_name: string;
+  match_date_iso: string | null;
+  match_time: string | null;
+  away_team: string;
+  home_team: string;
+  away_score: number | null;
+  home_score: number | null;
+  pirate_side: "away" | "home" | null;
+  opponent_team: string | null;
+  jersey_number: string | null;
+  starting_position: string | null;
+  boxscore_url: string | null;
+  pbp_url: string | null;
+  batting_clips: PlayerClipItem[];
+  pitching_clips: PlayerClipItem[];
+  fielding_clips: PlayerClipItem[];
+}
+
+export interface PlayerClipsRecord {
+  player_uid: string;
+  masked_name: string;
+  birth_ym: string | null;
+  total_matches: number;
+  total_batting: number;
+  total_pitching: number;
+  total_fielding: number;
+  matches: PlayerClipMatchRecord[];
+}
+
+export interface PlayerClipsDataset {
+  schema_version: "1.0.0";
+  meta: {
+    generated_at: string;
+    since_date: string | null;
+    until_date: string | null;
+    counts: {
+      players_with_clips: number;
+      matches: number;
+      videos: number;
+      total_clips: number;
+      dual_track_clips: number;
+      confidence: {
+        high: number;
+        medium: number;
+        low: number;
+      };
+    };
+  };
+  players: Record<string, PlayerClipsRecord>;
+}
 
 export interface LeagueRecord {
   league_id: number;

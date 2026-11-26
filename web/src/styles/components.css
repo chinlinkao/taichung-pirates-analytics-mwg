@@ -852,3 +852,97 @@ table.data-table tbody th.is-sticky-col {
   justify-content: space-between;
   gap: 0.5rem 1rem;
 }
+
+/* 8. Tab 5：球員影片集合（Clip Pills 與對戰單元格） */
+.clip-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.clip-filter-btn[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.clip-match-cell {
+  display: grid;
+  gap: 0.25rem;
+  min-inline-size: 13rem;
+}
+
+.clip-match-title {
+  font-weight: 700;
+}
+
+.clip-match-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.clip-pbp-link {
+  min-block-size: var(--target-size);
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+}
+
+.clip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-inline-size: 10.5rem;
+  max-inline-size: 20rem;
+}
+
+.clip-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-block-size: var(--target-size);
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  line-height: 1.25;
+}
+
+.clip-pill:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.clip-pill--batting {
+  border-color: var(--color-video-border);
+  background: var(--color-video-soft);
+  color: var(--color-video-accent);
+}
+
+.clip-pill--pitching {
+  border-color: color-mix(in srgb, var(--color-win) 45%, transparent);
+  background: color-mix(in srgb, var(--color-win) 10%, transparent);
+  color: var(--color-win);
+}
+
+.clip-pill--fielding {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.clip-pill--low {
+  border-style: dashed;
+  opacity: 0.88;
+}
+
+.clip-pill--dual {
+  box-shadow: inset 0 0 0 1px currentColor;
+}

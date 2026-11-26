@@ -19,6 +19,7 @@ export const MAIN_TABS: readonly TabDefinition[] = [
   { id: "leaderboards", label: "🏆 投打排行榜" },
   { id: "player", label: "👤 球員跨屆成長檔案" },
   { id: "opponents", label: "⚔️ 賽程戰果與對手分析" },
+  { id: "clips", label: "🎬 球員影片集合" },
 ];
 
 export interface TabsOptions {

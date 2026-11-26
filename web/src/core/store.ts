@@ -21,6 +21,7 @@ const VALID_TABS: readonly TabId[] = [
   "leaderboards",
   "player",
   "opponents",
+  "clips",
 ];
 
 const DEFAULT_HIGHLIGHT_PLAYER_UID = "蔡〇宇_2015-11";
@@ -177,7 +178,7 @@ export function serializeStateToSearch(
   if (state.tab !== "overview") {
     params.set("tab", state.tab);
   }
-  if (state.tab === "player" && state.selectedPlayerUid) {
+  if ((state.tab === "player" || state.tab === "clips") && state.selectedPlayerUid) {
     params.set("uid", state.selectedPlayerUid);
   }
   if (state.eraInnings !== 7 || state.tab === "player") {
