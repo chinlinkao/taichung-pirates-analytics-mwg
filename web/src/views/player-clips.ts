@@ -505,7 +505,7 @@ export function createPlayerClipsView(
       combobox = createPlayerCombobox({
         players: orderedPlayers,
         selectedPlayerUid: activeUid,
-        label: "搜尋球員影片集合（已優先排列近期 2026-10+ 有出賽影片選手）",
+        label: "搜尋球員影片集合（已優先排列有出賽影片選手）",
         onSelect: options.onSelectPlayer,
       });
       comboboxHost.replaceChildren(combobox.element);
@@ -517,7 +517,7 @@ export function createPlayerClipsView(
       statusBanner.hidden = false;
       statusBanner.setAttribute("role", "status");
       const p = document.createElement("p");
-      p.textContent = "正在載入球員影片時間軸索引（2026-10 起賽事）...";
+      p.textContent = "正在載入球員影片時間軸索引...";
       statusBanner.replaceChildren(p);
       profileBanner.hidden = true;
       kpiGrid.hidden = true;
@@ -553,12 +553,13 @@ export function createPlayerClipsView(
     }
 
     statusBanner.hidden = true;
+    statusBanner.replaceChildren();
     const clipsDataset = clipsState.clipsDataset;
     const playerMeta = orderedPlayers.find((p) => p.playerUid === activeUid) ?? null;
     const playerRecord = activeUid ? (clipsDataset.players[activeUid] ?? null) : null;
     currentPlayerRecord = playerRecord;
 
-    const sinceLabel = clipsDataset.meta.since_date ?? "2026-10-01";
+    const sinceLabel = clipsDataset.meta.since_date ?? "-";
     const untilLabel = clipsDataset.meta.until_date ?? "";
 
     // 依全域篩選條件 (teamIds) 過濾該球員的比賽
@@ -590,7 +591,7 @@ export function createPlayerClipsView(
 
       const infoP = document.createElement("p");
       infoP.textContent =
-        `目前試跑版本收錄範圍為 ${sinceLabel} ~ ${untilLabel}（共 ${clipsDataset.meta.counts.matches} 場含逐打席文字紀錄之賽事），` +
+        `目前收錄範圍為 ${sinceLabel} ~ ${untilLabel}（共 ${clipsDataset.meta.counts.matches} 場含逐打席文字紀錄之賽事），` +
         "所選球員在此條件下尚無出賽影片紀錄。請調整篩選條件或點選下方近期有影片的球員體驗：";
 
       const quickRow = document.createElement("div");

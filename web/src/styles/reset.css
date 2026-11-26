@@ -68,6 +68,11 @@ textarea {
   color: inherit;
 }
 
+/* 確保原生 hidden 屬性不被元件的 display: grid / flex 覆蓋 */
+[hidden] {
+  display: none !important;
+}
+
 /* 無障礙視覺隱藏（供螢幕報讀器與單次狀態播報使用） */
 .sr-only {
   position: absolute;

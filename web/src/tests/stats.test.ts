@@ -396,11 +396,15 @@ describe("第五頁籤：球員影片集合靜態資料與 URL 狀態同步", ()
 
     const gao = clipsData.players["高〇展_2015-10"];
     expect(gao).toBeDefined();
-    expect(gao?.total_matches).toBe(4);
-    expect(gao?.total_batting).toBe(8);
-    expect(gao?.total_pitching).toBe(5);
+    expect(gao?.total_matches).toBeGreaterThanOrEqual(4);
+    expect(gao?.total_batting).toBeGreaterThanOrEqual(8);
+    expect(gao?.total_pitching).toBeGreaterThanOrEqual(5);
 
     for (const p of Object.values(clipsData.players)) {
+      expect(p.total_matches).toBe(p.matches.length);
+      expect(p.total_batting).toBe(p.matches.reduce((acc, m) => acc + m.batting_clips.length, 0));
+      expect(p.total_pitching).toBe(p.matches.reduce((acc, m) => acc + m.pitching_clips.length, 0));
+      expect(p.total_fielding).toBe(p.matches.reduce((acc, m) => acc + m.fielding_clips.length, 0));
       for (const m of p.matches) {
         const allClips = [...m.batting_clips, ...m.pitching_clips, ...m.fielding_clips];
         for (const c of allClips) {
