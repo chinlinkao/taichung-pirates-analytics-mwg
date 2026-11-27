@@ -820,6 +820,26 @@ def fetch_and_parse_matches(
             parsed_all = extract_all_players_involvement(m, record_data, text_data, conn)
             _store_match_events_to_db(conn, m, parsed_all)
 
+            opp_roster: dict[str, dict[str, Optional[str]]] = {}
+            opp_bat_key = _find_team_key(record_data["batting_by_team"], opponent_team)
+            if opp_bat_key:
+                for row in record_data["batting_by_team"].get(opp_bat_key, []):
+                    oname = str(row.get("masked_name") or "").strip()
+                    if oname:
+                        opp_roster[oname] = {
+                            "jersey_number": row.get("jersey_number"),
+                            "batting_order": None,
+                        }
+            opp_lu_key = _find_team_key(text_data["lineups"], opponent_team)
+            if opp_lu_key:
+                for item in text_data["lineups"].get(opp_lu_key, []):
+                    oname = str(item.get("masked_name") or "").strip()
+                    if not oname or oname == "無":
+                        continue
+                    entry = opp_roster.setdefault(oname, {"jersey_number": None, "batting_order": None})
+                    if item.get("order") != "投手" and entry["batting_order"] is None:
+                        entry["batting_order"] = str(item["order"])
+
             results.append(
                 {
                     **m,
@@ -828,6 +848,7 @@ def fetch_and_parse_matches(
                     "half_innings": text_data["half_innings"],
                     "players": parsed_all["players"],
                     "lineups": parsed_all["lineups"],
+                    "opponent_roster": opp_roster,
                 }
             )
 

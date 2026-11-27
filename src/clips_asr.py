@@ -25,6 +25,7 @@ from pypinyin import Style, lazy_pinyin
 
 DEFAULT_TRANSCRIPT_DIR = Path("data/transcripts")
 TMP_MEDIA_DIR = Path("data/tmp_clips_media")
+RESULT_PRE_ROLL_SEC = 18.0
 
 _CN_DIGITS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
 _PA_POSITIVE_CUES = (
@@ -55,6 +56,33 @@ _PA_NEGATIVE_CUES = (
     "刺殺",
 )
 _FUZZY_CTX_CUES = ("棒", "打擊", "輪到", "交給", "上場", "打者", "面對", "代打", "號")
+_PITCH_CHANGE_CUES = (
+    "換投",
+    "更換投手",
+    "投手換上",
+    "登板",
+    "接替投球",
+    "中繼",
+    "後援",
+    "上來投",
+    "主投",
+    "先發投手",
+)
+_EXPLICIT_PITCH_CHANGE_CUES = ("換投", "更換投手", "投手換上", "接替投球", "更換了投手")
+_POS_BROADCAST_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "投": ("投手",),
+    "捕": ("捕手", "本壘"),
+    "一": ("一壘手", "一壘"),
+    "二": ("二壘手", "二壘"),
+    "三": ("三壘手", "三壘"),
+    "游": ("游擊手", "游擊"),
+    "左": ("左外野", "左外野手", "左半邊"),
+    "中": ("中外野", "中外野手", "中堅手"),
+    "右": ("右外野", "右外野手", "右半邊"),
+}
+_NON_DEFENSE_BASE_RE = re.compile(
+    r"(?:[一二三]壘安打|[一二三]壘有人|上[一二三]壘|[一二三]壘跑者|盜上[二三]壘|攻佔[一二三]壘|滿壘)"
+)
 
 
 def _normalize_pinyin_token(py: str) -> str:
@@ -204,7 +232,8 @@ def _find_player_matches_in_text(text: str, matcher: dict[str, Any]) -> list[dic
 
     # Tier 2: 背號比對 (基礎分 90)
     for jv in matcher["jersey_variants"]:
-        for m in re.finditer(rf"(?:背號\s*{re.escape(jv)}|{re.escape(jv)}\s*號)", text):
+        pat = rf"(?:背號(?:是|為)?\s*{re.escape(jv)}|{re.escape(jv)}\s*號|身穿\s*{re.escape(jv)})"
+        for m in re.finditer(pat, text):
             cpos = m.start()
             sc = _apply_context_score(text, cpos, 90, matcher)
             if sc >= 55 and cpos not in seen_pos:
@@ -248,8 +277,106 @@ def _find_player_matches_in_text(text: str, matcher: dict[str, Any]) -> list[dic
                                 seen_pos.add(cidx)
                         break
 
+    # Tier 5: 明確棒次唱名 + 打擊正語境 (基礎分 68)
+    if order_vars:
+        for ov in order_vars:
+            for m in re.finditer(re.escape(ov), text):
+                cpos = m.start()
+                if any(abs(cpos - sp) <= 4 for sp in seen_pos):
+                    continue
+                ctx_around = text[max(0, cpos - 10) : min(len(text), m.end() + 10)]
+                ctx_before = text[max(0, cpos - 8) : cpos]
+                has_pos_cue = any(kw in ctx_around for kw in ("輪到", "打擊", "交給", "面對", "打者", "上場", "代打"))
+                has_neg_cue = any(kw in ctx_before for kw in _PA_NEGATIVE_CUES)
+                if has_pos_cue and not has_neg_cue:
+                    candidates.append({"char_pos": cpos, "reason": "order_only", "score": 68})
+                    seen_pos.add(cpos)
+
     candidates.sort(key=lambda x: (-x["score"], x["char_pos"]))
     return candidates
+
+
+def _has_defensive_position_mention(text: str, pos: str) -> bool:
+    """檢查文本是否出現指定守備位置詞（先剔除安打／跑壘等非守備用語避免誤判）。"""
+    kws = _POS_BROADCAST_KEYWORDS.get(pos, ())
+    if not kws:
+        return False
+    cleaned = _NON_DEFENSE_BASE_RE.sub(" ", text)
+    return any(kw in cleaned for kw in kws)
+
+
+def _extract_pos_codes_from_detail(text: str) -> list[str]:
+    """從文字敘述萃取守備位置簡碼（如 '游擊手' -> '游'）。"""
+    pos_map = (
+        ("投", ("投手",)),
+        ("捕", ("捕手",)),
+        ("一", ("一壘手",)),
+        ("二", ("二壘手",)),
+        ("三", ("三壘手",)),
+        ("游", ("游擊手",)),
+        ("左", ("左外野手",)),
+        ("中", ("中外野手",)),
+        ("右", ("右外野手",)),
+    )
+    return [code for code, kws in pos_map if any(kw in text for kw in kws)]
+
+
+def _find_pa_result_matches(text: str, label_short: str, event_detail: str) -> Optional[dict[str, Any]]:
+    """Tier 6：依打席結果標籤與明細，於語音逐字稿比對明確播報結果詞（基礎分 62）。"""
+    lbl = label_short or ""
+    detail = event_detail or ""
+
+    if "全壘打" in lbl:
+        if any(kw in text for kw in ("全壘打", "紅不讓", "過大牆", "炸裂")):
+            return {"reason": "result_hr", "score": 68}
+        return None
+    if "三壘安打" in lbl:
+        if "三壘安打" in text:
+            return {"reason": "result_3b", "score": 66}
+        return None
+    if "二壘安打" in lbl:
+        if "二壘安打" in text:
+            return {"reason": "result_2b", "score": 65}
+        return None
+    if "一壘安打" in lbl or "內野安打" in lbl:
+        if any(kw in text for kw in ("一壘安打", "內野安打", "落地形成安打", "穿越安打", "敲出安打", "擊出安打")):
+            return {"reason": "result_1b", "score": 62}
+        return None
+    if "觸身球" in lbl:
+        if any(kw in text for kw in ("觸身球", "觸身", "丟到", "砸到")):
+            return {"reason": "result_hbp", "score": 65}
+        return None
+    if "保送" in lbl:
+        if any(kw in text for kw in ("四壞球", "四壞保送", "獲得保送", "選到保送", "保送上壘")):
+            return {"reason": "result_bb", "score": 63}
+        return None
+    if "雙殺" in lbl:
+        if "雙殺" in text:
+            return {"reason": "result_dp", "score": 66}
+        return None
+    if "三振" in lbl:
+        if any(kw in text for kw in ("三振", "揮棒落空", "拉弓", "不死三振", "K掉")):
+            return {"reason": "result_so", "score": 62}
+        return None
+
+    pos_codes = _extract_pos_codes_from_detail(detail)
+    if "接殺" in detail or "飛球" in lbl:
+        if any(kw in text for kw in ("接殺", "飛球")):
+            if pos_codes and any(_has_defensive_position_mention(text, p) for p in pos_codes):
+                return {"reason": "result_fly_pos", "score": 64}
+            if not pos_codes:
+                return {"reason": "result_fly", "score": 60}
+        return None
+    if "刺殺" in detail or "滾地" in lbl or "野手選擇" in lbl:
+        if any(kw in text for kw in ("傳一壘", "傳向一壘", "刺殺", "封殺", "滾地球")):
+            if pos_codes and any(_has_defensive_position_mention(text, p) for p in pos_codes):
+                return {"reason": "result_gb_pos", "score": 63}
+        return None
+    if "失誤" in lbl:
+        if any(kw in text for kw in ("失誤", "漏接", "暴傳")):
+            return {"reason": "result_err", "score": 62}
+        return None
+    return None
 
 
 def _match_text_to_player(text: str, matcher: dict[str, Any]) -> Optional[str]:
@@ -550,6 +677,7 @@ def refine_clips_with_asr(
     model_size: str = "base",
     pa_pre_roll: Optional[float] = None,
     force_asr: bool = False,
+    align_only: bool = False,
     transcript_dir: Path = DEFAULT_TRANSCRIPT_DIR,
     tmp_dir: Path = TMP_MEDIA_DIR,
 ) -> dict[str, int]:
@@ -622,7 +750,7 @@ def refine_clips_with_asr(
         else:
             missing_wins = [w for w in merged_req if not _window_covered(w, [tuple(x) for x in cached.get("windows", [])])]
 
-        if missing_wins:
+        if missing_wins and not align_only:
             if model is None:
                 model = _get_whisper_model(model_size)
             p_info = prompt_info_by_vid[vid]
@@ -673,155 +801,16 @@ def refine_clips_with_asr(
         m_clips = clips_by_match.get(match_id, [])
         if not m_clips:
             continue
-
-        order_by_uid = {
-            str(r["player_uid"]): str(r["batting_order"])
-            for r in conn.execute(
-                """
-                SELECT player_uid, batting_order
-                FROM match_lineups
-                WHERE match_id = ? AND player_uid IS NOT NULL AND batting_order != '投手'
-                """,
-                (match_id,),
-            ).fetchall()
-        }
-
-        matchers_by_uid = {
-            uid: build_player_matcher(
-                uid,
-                pdata["masked_name"],
-                pdata.get("jersey_number"),
-                batting_order=order_by_uid.get(uid),
-            )
-            for uid, pdata in g["players"].items()
-        }
-        all_matchers = list(matchers_by_uid.values())
-
-        # 按 (video_id, half_label) 分組打席/投球事件，並依 event_index 保持時間單調遞增
-        by_vid_half: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        fielding_by_vid_half: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for c in m_clips:
-            if c["clip_type"] in ("batting", "pitching"):
-                by_vid_half.setdefault((c["video_id"], c["half_label"]), []).append(c)
-            elif c["clip_type"] == "fielding":
-                fielding_by_vid_half.setdefault((c["video_id"], c["half_label"]), []).append(c)
-
-        matched_segments_for_db: list[dict[str, Any]] = []
-
-        for (vid, hlabel), group in by_vid_half.items():
-            segs = transcripts_by_vid.get(vid, {}).get("segments", [])
-            if not segs:
-                continue
-            group.sort(key=lambda x: x["event_index"])
-            h_start = int(group[0]["half_start_sec"])
-            h_end = int(group[0]["half_end_sec"])
-            if asr_mode == "speech_pa":
-                eff_start, eff_end = half_window_map.get((vid, hlabel), (max(0, h_start - 25), h_end + 35))
-            else:
-                eff_start, eff_end = (max(0, h_start - 15), h_end + 15)
-
-            win_segs = [s for s in segs if eff_start <= float(s["start"]) <= eff_end]
-            if not win_segs:
-                continue
-
-            min_allowed_sec = float(eff_start - 5)
-            for idx_c, c in enumerate(group):
-                is_speech_pa_batting = asr_mode == "speech_pa" and c["clip_type"] == "batting"
-                if not is_speech_pa_batting and c["confidence"] == "high":
-                    min_allowed_sec = max(min_allowed_sec, float(c["start_sec"]) + 8.0)
-                    continue
-
-                matcher = matchers_by_uid.get(c["player_uid"])
-                if not matcher:
-                    continue
-
-                if is_speech_pa_batting:
-                    max_allowed_sec = float(eff_end + 15)
-                else:
-                    max_allowed_sec = float(h_end + 15)
-                    for nxt in group[idx_c + 1 :]:
-                        if nxt["confidence"] == "high":
-                            max_allowed_sec = min(max_allowed_sec, float(nxt["start_sec"]) - 4.0)
-                            break
-
-                candidates: list[dict[str, Any]] = []
-                for s in win_segs:
-                    if float(s["end"]) < min_allowed_sec or float(s["start"]) > max_allowed_sec:
-                        continue
-                    matches = _find_player_matches_in_text(s["text"], matcher)
-                    for m in matches:
-                        exact_sec = _resolve_match_timestamp(s, m["char_pos"])
-                        if min_allowed_sec <= exact_sec <= max_allowed_sec:
-                            candidates.append(
-                                {
-                                    "exact_sec": exact_sec,
-                                    "score": m["score"],
-                                    "seg": s,
-                                }
-                            )
-
-                if candidates:
-                    best = min(candidates, key=lambda x: (-x["score"], x["exact_sec"]))
-                    exact_sec = float(best["exact_sec"])
-                    hit_seg = best["seg"]
-                    new_start = max(0, int(round(exact_sec - effective_pre_roll)))
-                    if c["confidence"] != "high" or c["align_method"] != "dual_track":
-                        clips_upgraded += 1
-                    c["start_sec"] = new_start
-                    c["align_method"] = "dual_track"
-                    c["confidence"] = "high"
-                    min_allowed_sec = exact_sec + 6.0
-
-                    matched_segments_for_db.append(
-                        {
-                            "video_id": vid,
-                            "start_sec": round(exact_sec, 2),
-                            "end_sec": hit_seg["end"],
-                            "text_masked": mask_matched_names_in_text(hit_seg["text"], all_matchers),
-                            "matched_uid": c["player_uid"],
-                        }
-                    )
-
-        # 對低／中信心度守備事件，以對方打者遮罩姓名同音比對主播唱名精修
-        opp_matcher_cache: dict[str, dict[str, Any]] = {}
-        for (vid, hlabel), f_group in fielding_by_vid_half.items():
-            segs = transcripts_by_vid.get(vid, {}).get("segments", [])
-            if not segs:
-                continue
-            f_group.sort(key=lambda x: x["event_index"])
-            h_start = int(f_group[0]["half_start_sec"])
-            h_end = int(f_group[0]["half_end_sec"])
-            win_segs = [s for s in segs if (h_start - 15) <= s["start"] <= (h_end + 15)]
-            if not win_segs:
-                continue
-
-            for c in f_group:
-                if c["confidence"] == "high":
-                    continue
-                opp_name = _extract_opponent_batter_from_fielding(c["event_detail"])
-                if not opp_name:
-                    continue
-                opp_m = opp_matcher_cache.get(opp_name)
-                if opp_m is None:
-                    opp_m = build_player_matcher(opp_name, opp_name, None)
-                    opp_matcher_cache[opp_name] = opp_m
-
-                cur_est = int(c["start_sec"])
-                search_lo = max(h_start - 15, cur_est - 90) if c["align_method"] == "bracket_interp" else max(h_start - 15, cur_est - 35)
-                search_hi = min(h_end + 15, cur_est + 90) if c["align_method"] == "bracket_interp" else min(h_end + 15, cur_est + 45)
-                hit_seg = None
-                for s in win_segs:
-                    if s["start"] < search_lo or s["start"] > search_hi:
-                        continue
-                    if _match_text_to_player(s["text"], opp_m) is not None:
-                        hit_seg = s
-                        break
-                if hit_seg is not None:
-                    # 守備處理通常發生於唱名打者之後數秒，以打者唱名點起算即可完整看到該打席守備
-                    c["start_sec"] = max(0, int(round(hit_seg["start"])) - 3)
-                    c["align_method"] = "dual_track"
-                    c["confidence"] = "high"
-                    clips_upgraded += 1
+        g_upgraded, matched_segments_for_db = _refine_clips_for_single_game(
+            g=g,
+            m_clips=m_clips,
+            conn=conn,
+            transcripts_by_vid=transcripts_by_vid,
+            half_window_map=half_window_map,
+            asr_mode=asr_mode,
+            effective_pre_roll=effective_pre_roll,
+        )
+        clips_upgraded += g_upgraded
 
         # 將命中的逐字稿遮罩分段寫入 SQLite（每次僅覆蓋相關影片）
         if matched_segments_for_db:
@@ -850,3 +839,618 @@ def refine_clips_with_asr(
         "videos_transcribed": transcribed_count,
         "clips_upgraded": clips_upgraded,
     }
+
+
+def _solve_batting_dp(
+    group: list[dict[str, Any]],
+    win_segs: list[dict[str, Any]],
+    matchers_by_uid: dict[str, dict[str, Any]],
+    all_matchers: list[dict[str, Any]],
+    vid: str,
+    eff_start: int,
+    eff_end: int,
+    h_start: int,
+    h_end: int,
+    asr_mode: str,
+    effective_pre_roll: float,
+    matched_segments_for_db: list[dict[str, Any]],
+) -> int:
+    """以半局全局動態規劃（DP）為打席序列找最高總分的單調遞增語音對齊組合。"""
+    group.sort(key=lambda x: x["event_index"])
+    n_pa = len(group)
+    if n_pa == 0:
+        return 0
+
+    half_span = max(60.0, float(h_end - h_start))
+    cands_per_pa: list[list[dict[str, Any]]] = []
+
+    for idx_c, c in enumerate(group):
+        is_speech_pa_batting = asr_mode == "speech_pa"
+        if not is_speech_pa_batting and c["confidence"] == "high":
+            fixed_t = float(c["start_sec"])
+            cands_per_pa.append(
+                [
+                    {
+                        "est_start": fixed_t,
+                        "exact_sec": fixed_t,
+                        "node_score": 1000.0,
+                        "is_fixed": True,
+                        "is_result": False,
+                        "seg": None,
+                    }
+                ]
+            )
+            continue
+
+        matcher = matchers_by_uid.get(c["player_uid"])
+        raw_cands: list[dict[str, Any]] = []
+        is_interp_clip = c["align_method"] == "bracket_interp"
+        orig_t = float(c["start_sec"])
+        rem_after = n_pa - 1 - idx_c
+
+        for s in win_segs:
+            s_start = float(s["start"])
+            if matcher:
+                for m in _find_player_matches_in_text(s["text"], matcher):
+                    exact_sec = _resolve_match_timestamp(s, m["char_pos"])
+                    if not (eff_start - 5 <= exact_sec <= eff_end + 15):
+                        continue
+                    est_start = max(0.0, exact_sec - effective_pre_roll)
+                    raw_cands.append(
+                        {
+                            "est_start": est_start,
+                            "exact_sec": exact_sec,
+                            "raw_score": float(m["score"]),
+                            "is_fixed": False,
+                            "is_result": False,
+                            "seg": s,
+                        }
+                    )
+
+            res_m = _find_pa_result_matches(s["text"], c.get("label_short", ""), c.get("event_detail", ""))
+            if res_m and (eff_start - 5 <= s_start <= eff_end + 15):
+                est_start = max(float(max(0, eff_start)), s_start - RESULT_PRE_ROLL_SEC)
+                raw_cands.append(
+                    {
+                        "est_start": est_start,
+                        "exact_sec": s_start,
+                        "raw_score": float(res_m["score"]),
+                        "is_fixed": False,
+                        "is_result": True,
+                        "seg": s,
+                    }
+                )
+
+        # 去重：4 秒內僅保留分數較高者
+        raw_cands.sort(key=lambda x: (-x["raw_score"], x["est_start"]))
+        deduped: list[dict[str, Any]] = []
+        for rc in raw_cands:
+            if any(abs(rc["est_start"] - kept["est_start"]) < 4.0 for kept in deduped):
+                continue
+            score = rc["raw_score"]
+            if not is_interp_clip and (h_end - h_start) > 30:
+                dist = abs(rc["est_start"] - orig_t)
+                if dist <= 45.0:
+                    score += 8.0
+                elif dist <= 90.0:
+                    score += 4.0
+                elif dist > max(180.0, half_span * 0.65):
+                    score -= 15.0
+            if rem_after > 0 and rc["est_start"] > (eff_end + 15.0 - rem_after * 8.0):
+                score -= 30.0
+            if score >= 50.0:
+                rc["node_score"] = score
+                deduped.append(rc)
+
+        deduped.sort(key=lambda x: (-x["node_score"], x["est_start"]))
+        top_cands = sorted(deduped[:12], key=lambda x: (x["est_start"], x["exact_sec"]))
+        cands_per_pa.append(top_cands)
+
+    # 動態規劃求解單調遞增最大總分序列
+    dp: list[list[float]] = []
+    prev_ptr: list[list[Optional[tuple[int, int]]]] = []
+    for i in range(n_pa):
+        k_len = len(cands_per_pa[i])
+        dp.append([cands_per_pa[i][k]["node_score"] for k in range(k_len)])
+        prev_ptr.append([None] * k_len)
+
+    for i in range(n_pa):
+        for k, ci in enumerate(cands_per_pa[i]):
+            for p in range(i):
+                gap_idx = i - p
+                for pk, cp in enumerate(cands_per_pa[p]):
+                    if ci["est_start"] < cp["est_start"] + 8.0 * gap_idx:
+                        continue
+                    if not ci["is_fixed"] and not cp["is_fixed"]:
+                        if ci["exact_sec"] < cp["exact_sec"] + 2.0:
+                            continue
+                    avg_gap = (ci["est_start"] - cp["est_start"]) / gap_idx
+                    gap_bonus = 5.0 if 15.0 <= avg_gap <= 180.0 else 0.0
+                    cand_total = dp[p][pk] + ci["node_score"] + gap_bonus
+                    if cand_total > dp[i][k]:
+                        dp[i][k] = cand_total
+                        prev_ptr[i][k] = (p, pk)
+
+    best_end: Optional[tuple[int, int]] = None
+    best_total = -1.0
+    for i in range(n_pa):
+        for k in range(len(cands_per_pa[i])):
+            if dp[i][k] > best_total:
+                best_total = dp[i][k]
+                best_end = (i, k)
+
+    selected: dict[int, dict[str, Any]] = {}
+    cur = best_end
+    while cur is not None:
+        ci_idx, ck_idx = cur
+        selected[ci_idx] = cands_per_pa[ci_idx][ck_idx]
+        cur = prev_ptr[ci_idx][ck_idx]
+
+    upgraded = 0
+    prev_assigned_start = -1
+    for i, c in enumerate(group):
+        chosen = selected.get(i)
+        if chosen is None or chosen["is_fixed"]:
+            if c["confidence"] == "high":
+                prev_assigned_start = max(prev_assigned_start, int(c["start_sec"]))
+            continue
+
+        new_start = max(0, int(round(chosen["est_start"])))
+        if chosen["is_result"] and prev_assigned_start >= 0:
+            new_start = max(new_start, prev_assigned_start + 6)
+        prev_assigned_start = new_start
+
+        if c["confidence"] != "high" or c["align_method"] != "dual_track":
+            upgraded += 1
+        c["start_sec"] = new_start
+        c["align_method"] = "dual_track"
+        c["confidence"] = "high"
+
+        hit_seg = chosen["seg"]
+        if hit_seg is not None:
+            matched_segments_for_db.append(
+                {
+                    "video_id": vid,
+                    "start_sec": round(float(chosen["exact_sec"]), 2),
+                    "end_sec": hit_seg["end"],
+                    "text_masked": mask_matched_names_in_text(hit_seg["text"], all_matchers),
+                    "matched_uid": c["player_uid"],
+                }
+            )
+
+    # 雙軌夾擠內插：僅對夾在兩筆精準錨點中間的未命中打席升級為 medium (dual_track_bracket)
+    anchor_indices = [
+        i
+        for i, c in enumerate(group)
+        if c["align_method"] == "dual_track" or (i in selected and selected[i]["is_fixed"])
+    ]
+    if len(anchor_indices) >= 2:
+        for pos_idx in range(len(anchor_indices) - 1):
+            p = anchor_indices[pos_idx]
+            q = anchor_indices[pos_idx + 1]
+            if q - p <= 1:
+                continue
+            sp = int(group[p]["start_sec"])
+            sq = int(group[q]["start_sec"])
+            if sq <= sp + 10:
+                continue
+            for mid_i in range(p + 1, q):
+                mc = group[mid_i]
+                if mc["align_method"] == "dual_track" or mc["confidence"] == "high":
+                    continue
+                interp_sec = max(0, int(round(sp + (sq - sp) * ((mid_i - p) / (q - p)))))
+                mc["start_sec"] = interp_sec
+                mc["align_method"] = "dual_track_bracket"
+                mc["confidence"] = "medium"
+
+    return upgraded
+
+
+def _refine_pitching_clips(
+    pitching_by_vid_half: dict[tuple[str, str], list[dict[str, Any]]],
+    transcripts_by_vid: dict[str, dict[str, Any]],
+    half_window_map: dict[tuple[str, str], tuple[int, int]],
+    matchers_by_uid: dict[str, dict[str, Any]],
+    all_matchers: list[dict[str, Any]],
+    matched_segments_for_db: list[dict[str, Any]],
+) -> int:
+    """獨立語音通道：精修低／中信心度投球（先發與中繼換投）時間戳記。"""
+    upgraded = 0
+    _batting_noise_cues = ("打擊", "打席", "打西", "打者", "棒打", "第一棒", "第二棒", "第三棒", "第四棒", "第五棒", "第六棒", "第七棒", "第八棒", "第九棒")
+
+    for (vid, hlabel), p_group in pitching_by_vid_half.items():
+        segs = transcripts_by_vid.get(vid, {}).get("segments", [])
+        if not segs:
+            continue
+        p_group.sort(key=lambda x: x["event_index"])
+        h_start = int(p_group[0]["half_start_sec"])
+        h_end = int(p_group[0]["half_end_sec"])
+        eff_start, eff_end = half_window_map.get((vid, hlabel), (max(0, h_start - 25), h_end + 35))
+        win_segs = [s for s in segs if eff_start <= float(s["start"]) <= eff_end]
+        if not win_segs:
+            continue
+
+        reliever_cnt = sum(1 for pc in p_group if int(pc["event_index"]) > 1)
+        min_pitch_sec = float(eff_start - 5)
+        half_span = max(60.0, float(h_end - h_start))
+
+        for pc in p_group:
+            if pc["confidence"] == "high":
+                min_pitch_sec = max(min_pitch_sec, float(pc["start_sec"]) + 8.0)
+                continue
+            matcher = matchers_by_uid.get(pc["player_uid"])
+            is_interp = pc["align_method"] == "bracket_interp"
+            cur_est = float(pc["start_sec"])
+            s_lo, s_hi = min_pitch_sec, float(eff_end + 10)
+
+            candidates: list[dict[str, Any]] = []
+            for s in win_segs:
+                st = float(s["start"])
+                if float(s["end"]) < s_lo or st > s_hi:
+                    continue
+                txt = s["text"]
+                has_pitch_cue = any(kw in txt for kw in _PITCH_CHANGE_CUES)
+                has_explicit_change = any(kw in txt for kw in _EXPLICIT_PITCH_CHANGE_CUES)
+
+                if matcher:
+                    for m in _find_player_matches_in_text(txt, matcher):
+                        if m["reason"] == "order_only":
+                            continue
+                        cpos = int(m["char_pos"])
+                        ctx_near = txt[max(0, cpos - 12) : min(len(txt), cpos + 14)]
+                        if any(bk in ctx_near for bk in _batting_noise_cues) and not has_pitch_cue:
+                            continue
+                        ex_sec = _resolve_match_timestamp(s, cpos)
+                        if s_lo <= ex_sec <= s_hi:
+                            sc = 100.0 if has_pitch_cue else 80.0
+                            if not is_interp and half_span > 30:
+                                dist = abs(ex_sec - cur_est)
+                                if dist <= 60.0:
+                                    sc += 8.0
+                                elif dist > max(180.0, half_span * 0.65):
+                                    sc -= 15.0
+                            if sc >= 60.0:
+                                candidates.append({"exact_sec": ex_sec, "score": sc, "seg": s})
+
+                if int(pc["event_index"]) > 1 and reliever_cnt == 1 and has_explicit_change:
+                    if not is_interp and abs(st - cur_est) <= 60.0 and s_lo <= st <= s_hi:
+                        candidates.append({"exact_sec": st, "score": 70.0, "seg": s})
+
+            if candidates:
+                best = min(candidates, key=lambda x: (-x["score"], abs(x["exact_sec"] - cur_est)))
+                ex_sec = float(best["exact_sec"])
+                new_start = max(0, int(round(ex_sec - 5.0)))
+                pc["start_sec"] = new_start
+                pc["align_method"] = "dual_track"
+                pc["confidence"] = "high"
+                min_pitch_sec = ex_sec + 8.0
+                upgraded += 1
+
+                hit_seg = best["seg"]
+                matched_segments_for_db.append(
+                    {
+                        "video_id": vid,
+                        "start_sec": round(ex_sec, 2),
+                        "end_sec": hit_seg["end"],
+                        "text_masked": mask_matched_names_in_text(hit_seg["text"], all_matchers),
+                        "matched_uid": pc["player_uid"],
+                    }
+                )
+    return upgraded
+
+
+def _extract_fielding_action_keywords(detail: str) -> tuple[str, ...]:
+    """依守備事件文字萃取對應的播報動作關鍵字。"""
+    if "雙殺" in detail:
+        return ("雙殺",)
+    if "失誤" in detail:
+        return ("失誤", "漏接", "暴傳", "沒接好")
+    if "接殺" in detail:
+        return ("接殺", "飛球", "美技")
+    if "觸殺" in detail or "夾殺" in detail:
+        return ("觸殺", "夾殺")
+    return ("傳一壘", "傳向一壘", "刺殺", "封殺", "滾地", "接到", "出局")
+
+
+def _refine_fielding_clips(
+    fielding_by_vid_half: dict[tuple[str, str], list[dict[str, Any]]],
+    transcripts_by_vid: dict[str, dict[str, Any]],
+    half_window_map: dict[tuple[str, str], tuple[int, int]],
+    opp_roster: dict[str, dict[str, Optional[str]]],
+    all_matchers: list[dict[str, Any]],
+    matched_segments_for_db: list[dict[str, Any]],
+) -> int:
+    """守備雙通道全局 DP 精修：F1（對手打者完整比對）＋ F2（守位詞與守備動作複合比對）。"""
+    opp_matcher_cache: dict[str, dict[str, Any]] = {}
+    upgraded = 0
+
+    for (vid, hlabel), f_group in fielding_by_vid_half.items():
+        segs = transcripts_by_vid.get(vid, {}).get("segments", [])
+        if not segs:
+            continue
+        f_group.sort(key=lambda x: x["event_index"])
+        h_start = int(f_group[0]["half_start_sec"])
+        h_end = int(f_group[0]["half_end_sec"])
+        eff_start, eff_end = half_window_map.get((vid, hlabel), (max(0, h_start - 15), h_end + 15))
+        win_segs = [s for s in segs if eff_start <= float(s["start"]) <= eff_end]
+        if not win_segs:
+            continue
+
+        by_ev_idx: dict[int, list[dict[str, Any]]] = {}
+        for c in f_group:
+            by_ev_idx.setdefault(int(c["event_index"]), []).append(c)
+
+        ev_list = sorted(by_ev_idx.keys())
+        n_ev = len(ev_list)
+        half_span = max(60.0, float(h_end - h_start))
+        cands_per_ev: list[list[dict[str, Any]]] = []
+
+        for idx_e, ev_idx in enumerate(ev_list):
+            ev_clips = by_ev_idx[ev_idx]
+            non_high_clips = [c for c in ev_clips if c["confidence"] != "high"]
+            if not non_high_clips:
+                fixed_t = float(ev_clips[0]["start_sec"])
+                cands_per_ev.append(
+                    [
+                        {
+                            "start_sec": fixed_t,
+                            "exact_sec": fixed_t,
+                            "node_score": 1000.0,
+                            "is_fixed": True,
+                            "seg": None,
+                        }
+                    ]
+                )
+                continue
+
+            rep = non_high_clips[0]
+            cur_est = float(rep["start_sec"])
+            is_interp = rep["align_method"] == "bracket_interp"
+            rem_after = n_ev - 1 - idx_e
+            if is_interp:
+                search_lo = max(float(eff_start), cur_est - 120.0) if (h_end - h_start) > 180 else float(eff_start)
+                search_hi = float(eff_end)
+            else:
+                search_lo = max(float(eff_start), cur_est - 50.0)
+                search_hi = min(float(eff_end), cur_est + 60.0)
+
+            raw_cands: list[dict[str, Any]] = []
+
+            # 通道 F1：對手打者遮罩姓名同音＋背號＋先發棒次
+            opp_name = _extract_opponent_batter_from_fielding(rep["event_detail"])
+            if opp_name:
+                opp_m = opp_matcher_cache.get(opp_name)
+                if opp_m is None:
+                    r_info = opp_roster.get(opp_name, {})
+                    opp_m = build_player_matcher(
+                        opp_name,
+                        opp_name,
+                        r_info.get("jersey_number"),
+                        batting_order=r_info.get("batting_order"),
+                    )
+                    opp_matcher_cache[opp_name] = opp_m
+
+                for s in win_segs:
+                    st = float(s["start"])
+                    if st < search_lo or st > search_hi:
+                        continue
+                    for ms in _find_player_matches_in_text(s["text"], opp_m):
+                        ex_sec = _resolve_match_timestamp(s, ms["char_pos"])
+                        est_s = max(0.0, ex_sec - 3.0)
+                        raw_cands.append(
+                            {
+                                "start_sec": est_s,
+                                "exact_sec": ex_sec,
+                                "raw_score": 95.0,
+                                "is_fixed": False,
+                                "seg": s,
+                            }
+                        )
+
+            # 通道 F2：守位詞＋對應守備動作詞在同段或相鄰 8 秒內共現
+            pos_codes = set(_extract_pos_codes_from_detail(rep["event_detail"]))
+            for c in ev_clips:
+                m_pos = re.match(r"^\[([^\]]+)\]", c.get("label_short", ""))
+                if m_pos:
+                    pos_codes.add(m_pos.group(1))
+            action_kws = _extract_fielding_action_keywords(rep["event_detail"])
+
+            if pos_codes:
+                for idx_s, s in enumerate(win_segs):
+                    st = float(s["start"])
+                    if st < search_lo or st > search_hi:
+                        continue
+                    if not any(_has_defensive_position_mention(s["text"], p) for p in pos_codes):
+                        continue
+                    merged_txt = s["text"]
+                    for nxt_s in win_segs[idx_s + 1 :]:
+                        if float(nxt_s["start"]) <= st + 8.0:
+                            merged_txt += " " + nxt_s["text"]
+                        else:
+                            break
+                    if any(ak in merged_txt for ak in action_kws):
+                        raw_cands.append(
+                            {
+                                "start_sec": max(0.0, st - 10.0),
+                                "exact_sec": st,
+                                "raw_score": 85.0,
+                                "is_fixed": False,
+                                "seg": s,
+                            }
+                        )
+
+            raw_cands.sort(key=lambda x: (-x["raw_score"], x["start_sec"]))
+            deduped: list[dict[str, Any]] = []
+            for rc in raw_cands:
+                if any(abs(rc["start_sec"] - k["start_sec"]) < 5.0 for k in deduped):
+                    continue
+                sc = rc["raw_score"]
+                if not is_interp and half_span > 30:
+                    dist = abs(rc["start_sec"] - cur_est)
+                    if dist <= 40.0:
+                        sc += 8.0
+                if rem_after > 0 and rc["start_sec"] > (eff_end - rem_after * 8.0):
+                    sc -= 25.0
+                if sc >= 55.0:
+                    rc["node_score"] = sc
+                    deduped.append(rc)
+
+            deduped.sort(key=lambda x: (-x["node_score"], x["start_sec"]))
+            cands_per_ev.append(sorted(deduped[:10], key=lambda x: x["start_sec"]))
+
+        # 小型全局單調 DP（防止前事件誤抓尾端擠掉後續整排守備）
+        dp: list[list[float]] = []
+        prev_ptr: list[list[Optional[tuple[int, int]]]] = []
+        for i in range(n_ev):
+            dp.append([cands_per_ev[i][k]["node_score"] for k in range(len(cands_per_ev[i]))])
+            prev_ptr.append([None] * len(cands_per_ev[i]))
+
+        for i in range(n_ev):
+            for k, ci in enumerate(cands_per_ev[i]):
+                for p in range(i):
+                    gap_idx = i - p
+                    for pk, cp in enumerate(cands_per_ev[p]):
+                        if ci["start_sec"] < cp["start_sec"] + 6.0 * gap_idx:
+                            continue
+                        cand_total = dp[p][pk] + ci["node_score"]
+                        if cand_total > dp[i][k]:
+                            dp[i][k] = cand_total
+                            prev_ptr[i][k] = (p, pk)
+
+        best_end: Optional[tuple[int, int]] = None
+        best_total = -1.0
+        for i in range(n_ev):
+            for k in range(len(cands_per_ev[i])):
+                if dp[i][k] > best_total:
+                    best_total = dp[i][k]
+                    best_end = (i, k)
+
+        selected: dict[int, dict[str, Any]] = {}
+        cur = best_end
+        while cur is not None:
+            ei, ek = cur
+            selected[ei] = cands_per_ev[ei][ek]
+            cur = prev_ptr[ei][ek]
+
+        for idx_e, ev_idx in enumerate(ev_list):
+            chosen = selected.get(idx_e)
+            if chosen is None or chosen["is_fixed"]:
+                continue
+            ev_clips = by_ev_idx[ev_idx]
+            non_high_clips = [c for c in ev_clips if c["confidence"] != "high"]
+            if not non_high_clips:
+                continue
+            new_start = max(0, int(round(chosen["start_sec"])))
+            for c in non_high_clips:
+                c["start_sec"] = new_start
+                c["align_method"] = "dual_track"
+                c["confidence"] = "high"
+                upgraded += 1
+            hit_seg = chosen["seg"]
+            if hit_seg is not None:
+                matched_segments_for_db.append(
+                    {
+                        "video_id": vid,
+                        "start_sec": round(float(chosen["exact_sec"]), 2),
+                        "end_sec": hit_seg["end"],
+                        "text_masked": mask_matched_names_in_text(hit_seg["text"], all_matchers),
+                        "matched_uid": None,
+                    }
+                )
+    return upgraded
+
+
+def _refine_clips_for_single_game(
+    g: dict[str, Any],
+    m_clips: list[dict[str, Any]],
+    conn: sqlite3.Connection,
+    transcripts_by_vid: dict[str, dict[str, Any]],
+    half_window_map: dict[tuple[str, str], tuple[int, int]],
+    asr_mode: str,
+    effective_pre_roll: float,
+) -> tuple[int, list[dict[str, Any]]]:
+    """對單場比賽執行打席 DP、投球獨立通道與守備雙通道精修。"""
+    match_id = int(g["match_id"])
+    order_by_uid = {
+        str(r["player_uid"]): str(r["batting_order"])
+        for r in conn.execute(
+            """
+            SELECT player_uid, batting_order
+            FROM match_lineups
+            WHERE match_id = ? AND player_uid IS NOT NULL AND batting_order != '投手'
+            """,
+            (match_id,),
+        ).fetchall()
+    }
+
+    matchers_by_uid = {
+        uid: build_player_matcher(
+            uid,
+            pdata["masked_name"],
+            pdata.get("jersey_number"),
+            batting_order=order_by_uid.get(uid),
+        )
+        for uid, pdata in g["players"].items()
+    }
+    all_matchers = list(matchers_by_uid.values())
+
+    batting_by_vid_half: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    pitching_by_vid_half: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    fielding_by_vid_half: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for c in m_clips:
+        key = (c["video_id"], c["half_label"])
+        if c["clip_type"] == "batting":
+            batting_by_vid_half.setdefault(key, []).append(c)
+        elif c["clip_type"] == "pitching":
+            pitching_by_vid_half.setdefault(key, []).append(c)
+        elif c["clip_type"] == "fielding":
+            fielding_by_vid_half.setdefault(key, []).append(c)
+
+    matched_segments_for_db: list[dict[str, Any]] = []
+    upgraded = 0
+
+    for (vid, hlabel), group in batting_by_vid_half.items():
+        segs = transcripts_by_vid.get(vid, {}).get("segments", [])
+        if not segs:
+            continue
+        h_start = int(group[0]["half_start_sec"])
+        h_end = int(group[0]["half_end_sec"])
+        if asr_mode == "speech_pa":
+            eff_start, eff_end = half_window_map.get((vid, hlabel), (max(0, h_start - 25), h_end + 35))
+        else:
+            eff_start, eff_end = (max(0, h_start - 15), h_end + 15)
+        win_segs = [s for s in segs if eff_start <= float(s["start"]) <= eff_end]
+        if not win_segs:
+            continue
+        upgraded += _solve_batting_dp(
+            group=group,
+            win_segs=win_segs,
+            matchers_by_uid=matchers_by_uid,
+            all_matchers=all_matchers,
+            vid=vid,
+            eff_start=eff_start,
+            eff_end=eff_end,
+            h_start=h_start,
+            h_end=h_end,
+            asr_mode=asr_mode,
+            effective_pre_roll=effective_pre_roll,
+            matched_segments_for_db=matched_segments_for_db,
+        )
+
+    upgraded += _refine_pitching_clips(
+        pitching_by_vid_half=pitching_by_vid_half,
+        transcripts_by_vid=transcripts_by_vid,
+        half_window_map=half_window_map,
+        matchers_by_uid=matchers_by_uid,
+        all_matchers=all_matchers,
+        matched_segments_for_db=matched_segments_for_db,
+    )
+    upgraded += _refine_fielding_clips(
+        fielding_by_vid_half=fielding_by_vid_half,
+        transcripts_by_vid=transcripts_by_vid,
+        half_window_map=half_window_map,
+        opp_roster=g.get("opponent_roster", {}),
+        all_matchers=all_matchers,
+        matched_segments_for_db=matched_segments_for_db,
+    )
+    return upgraded, matched_segments_for_db

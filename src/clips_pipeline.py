@@ -198,6 +198,7 @@ async def run_clips_pipeline(
             model_size=model_size,
             pa_pre_roll=pa_pre_roll,
             force_asr=force_asr,
+            align_only=align_only,
         )
         print(
             f"  - 軌道 B 完成：新轉錄影片 {asr_stats['videos_transcribed']} 支，"

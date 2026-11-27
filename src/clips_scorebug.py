@@ -701,38 +701,72 @@ def _partition_halves_across_videos(
     expected_order = [_half_sort_key(h, i) for h, i in expected_halves]
     half_by_hk = {_half_sort_key(h, i): (h, i) for h, i in expected_halves}
 
-    # 統計各影片偵測到哪些 half_key（取出現次數 >= 2 的半局推估範圍）
-    vid_ranges: list[tuple[str, int]] = []
-    for scan in raw_scans_in_order:
+    # 統計各影片穩定出現 (>= 2 幀) 的合法半局集合與偵測總幀數
+    scan_stats: list[dict[str, Any]] = []
+    for order_idx, scan in enumerate(raw_scans_in_order):
         counts: Counter[int] = Counter()
         for s in scan.get("samples", []):
             if s.get("detected") and s.get("half") in ("TOP", "BOT") and isinstance(s.get("inning"), int):
                 hk = _half_sort_key(s["half"], s["inning"])
                 if hk in half_by_hk:
                     counts[hk] += 1
-        valid_hks = [hk for hk, c in counts.items() if c >= 2]
-        median_hk = sorted(valid_hks)[len(valid_hks) // 2] if valid_hks else 0
-        vid_ranges.append((scan["video_id"], median_hk))
+        valid_set = {hk for hk, c in counts.items() if c >= 2}
+        scan_stats.append(
+            {
+                "order_idx": order_idx,
+                "scan": scan,
+                "vid": scan["video_id"],
+                "valid_set": valid_set,
+                "total_det": sum(counts.values()),
+            }
+        )
 
-    # 用時間序切分點分配（通常 Part 1 前半段、Part 2 後半段）
+    # 過濾雙流／高度重疊且無獨佔半局的冗餘影片（如兩支影片同錄第 2~4 局，由較完整者承載全場）
+    active_stats: list[dict[str, Any]] = []
+    for st in scan_stats:
+        v_set = st["valid_set"]
+        is_redundant_overlap = False
+        if v_set:
+            for other in scan_stats:
+                if other["order_idx"] == st["order_idx"]:
+                    continue
+                o_set = other["valid_set"]
+                if len(v_set & o_set) >= 2 and len(v_set - o_set) == 0:
+                    if (len(o_set), other["total_det"], -other["order_idx"]) > (
+                        len(v_set),
+                        st["total_det"],
+                        -st["order_idx"],
+                    ):
+                        is_redundant_overlap = True
+                        break
+        if not is_redundant_overlap:
+            active_stats.append(st)
+
+    if not active_stats:
+        active_stats = [scan_stats[0]]
+    if len(active_stats) == 1:
+        return [(active_stats[0]["vid"], expected_halves)]
+
+    # 用前後接續切分點分配（優先採用後段影片「獨佔」的最早穩定半局，避免交界誤切）
     assignments: list[tuple[str, list[tuple[str, int]]]] = []
     start_idx = 0
-    for idx, scan in enumerate(raw_scans_in_order):
-        vid = scan["video_id"]
-        if idx == len(raw_scans_in_order) - 1:
+    for idx, st in enumerate(active_stats):
+        vid = st["vid"]
+        if idx == len(active_stats) - 1:
             slice_hks = expected_order[start_idx:]
         else:
-            # 找下一段影片最早穩定出現的半局作為切換界線
-            next_scan = raw_scans_in_order[idx + 1]
-            next_counts: Counter[int] = Counter()
-            for s in next_scan.get("samples", []):
-                if s.get("detected") and s.get("half") in ("TOP", "BOT") and isinstance(s.get("inning"), int):
-                    hk = _half_sort_key(s["half"], s["inning"])
-                    if hk in half_by_hk:
-                        next_counts[hk] += 1
-            next_valid = sorted(hk for hk, c in next_counts.items() if c >= 2)
-            split_hk = next_valid[0] if next_valid else expected_order[min(len(expected_order) - 1, len(expected_order) // 2)]
-            split_pos = next((k for k, hk in enumerate(expected_order) if hk >= split_hk), len(expected_order) // 2)
+            nxt_st = active_stats[idx + 1]
+            unique_next = sorted(nxt_st["valid_set"] - st["valid_set"])
+            next_valid = unique_next or sorted(nxt_st["valid_set"])
+            split_hk = (
+                next_valid[0]
+                if next_valid
+                else expected_order[min(len(expected_order) - 1, len(expected_order) // 2)]
+            )
+            split_pos = next(
+                (k for k, hk in enumerate(expected_order) if hk >= split_hk),
+                len(expected_order) // 2,
+            )
             split_pos = max(start_idx + 1, split_pos)
             slice_hks = expected_order[start_idx:split_pos]
             start_idx = split_pos
@@ -791,6 +825,20 @@ def align_game_all_players(
     }
 
     part_assignments = _partition_halves_across_videos(available_scans, expected_halves)
+    assigned_vids = {vid for vid, sub in part_assignments if sub}
+    if conn is not None:
+        match_id_cur = int(game["match_id"])
+        for scan in available_scans:
+            vid_unused = scan["video_id"]
+            if vid_unused not in assigned_vids:
+                other_cnt = conn.execute(
+                    "SELECT COUNT(*) FROM match_videos WHERE video_id = ? AND match_id != ?",
+                    (vid_unused, match_id_cur),
+                ).fetchone()[0]
+                if other_cnt == 0:
+                    with conn:
+                        conn.execute("DELETE FROM video_scorebug_segments WHERE video_id = ?", (vid_unused,))
+
     seg_by_label: dict[str, tuple[str, dict[str, Any], list[dict[str, Any]]]] = {}
 
     for vid, sub_halves in part_assignments:
