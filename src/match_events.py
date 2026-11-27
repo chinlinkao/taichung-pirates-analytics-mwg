@@ -759,17 +759,23 @@ def fetch_and_parse_matches(
             ).fetchall()
             videos_by_match[m["match_id"]] = [dict(v) for v in vrows]
 
-        # 下載尚缺之 HTML 快取（間隔 >= 1.6s）
+        # 下載尚缺或已開賽但仍為空紀錄之 HTML 快取（間隔 >= 1.6s）
         to_fetch: list[tuple[str, Path]] = []
         seen_paths: set[Path] = set()
         for m in match_rows:
             site_id = extract_site_match_id(m["boxscore_url"]) or str(m["match_id"])
             rec_path = cache_dir / f"{m['league_id']}_{site_id}_record.html"
             txt_path = cache_dir / f"{m['league_id']}_{site_id}_text.html"
+
+            is_stale_empty = False
+            if not parse_only and m.get("away_score") is not None and txt_path.exists():
+                if not parse_show_text_html(txt_path.read_text(encoding="utf-8"), set())["half_innings"]:
+                    is_stale_empty = True
+
             for url, p in ((m["boxscore_url"], rec_path), (m["pbp_url"], txt_path)):
                 if p not in seen_paths:
                     seen_paths.add(p)
-                    if not p.exists() and url:
+                    if url and (not p.exists() or is_stale_empty):
                         to_fetch.append((url, p))
 
         if to_fetch and not parse_only:
