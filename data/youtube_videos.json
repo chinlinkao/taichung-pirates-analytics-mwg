@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-27T01:41:16Z",
+  "updated_at": "2026-11-27T10:07:34Z",
   "videos": {
     "-Onb2HuiG6M": {
       "video_id": "-Onb2HuiG6M",
@@ -4144,6 +4144,22 @@
       "part_label": null,
       "is_match_video": 1,
       "fetched_at": "2026-11-25T06:15:28Z"
+    },
+    "vc0gLRfLa_Y": {
+      "video_id": "vc0gLRfLa_Y",
+      "channel_id": "UCPV6fPtF1DjGid4uxduEgYA",
+      "channel_handle": "@justbestgames6021",
+      "source_tab": "videos",
+      "title": "【臺中U10大聯盟】G13 SVP #15(台中小海盜)&G14 MVP #13(台中小海盜)",
+      "url": "https://www.youtube.com/watch?v=vc0gLRfLa_Y",
+      "duration_sec": 74,
+      "is_live_content": null,
+      "broadcast_start_utc": null,
+      "broadcast_date_iso": null,
+      "broadcast_time": null,
+      "part_label": null,
+      "is_match_video": 0,
+      "fetched_at": "2026-11-27T10:07:34Z"
     },
     "vqKdoiK8nUU": {
       "video_id": "vqKdoiK8nUU",
