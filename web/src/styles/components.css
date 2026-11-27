@@ -46,6 +46,12 @@
   background: var(--color-surface-muted);
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .btn-primary {
   border-color: transparent;
   background: var(--color-accent);
@@ -1148,9 +1154,5 @@ dialog.clips-updater-dialog::backdrop {
 
 .clips-updater-footer {
   flex-wrap: wrap;
-}
-
-.clips-cancel-btn {
-  border-color: color-mix(in srgb, var(--color-loss) 50%, transparent);
-  color: var(--color-loss);
+  justify-content: flex-end;
 }

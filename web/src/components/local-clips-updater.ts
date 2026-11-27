@@ -207,12 +207,6 @@ export function createLocalClipsUpdater(
   const footer = document.createElement("div");
   footer.className = "drawer-footer clips-updater-footer";
 
-  const cancelTaskBtn = document.createElement("button");
-  cancelTaskBtn.type = "button";
-  cancelTaskBtn.className = "btn clips-cancel-btn";
-  cancelTaskBtn.textContent = "終止任務";
-  cancelTaskBtn.hidden = true;
-
   const footerRight = document.createElement("div");
   footerRight.className = "toolbar-group";
 
@@ -230,15 +224,25 @@ export function createLocalClipsUpdater(
   startBtn.textContent = "開始更新影片片段";
 
   footerRight.append(closeFooterBtn, startBtn);
-  footer.append(cancelTaskBtn, footerRight);
+  footer.append(footerRight);
 
   shell.append(header, body, footer);
   dialog.append(closeForm, shell);
 
   let currentStatus: JobStatus = "idle";
+  let hasStartedInDialog = false;
   let currentLogs: string[] = [];
   let eventSource: EventSource | null = null;
   let isDestroyed = false;
+
+  const syncStartButtonVisibility = (): void => {
+    const locked = currentStatus === "running" || hasStartedInDialog;
+    sinceInput.disabled = locked;
+    autoPushCheckbox.disabled = locked;
+    startBtn.disabled = locked;
+    startBtn.hidden = locked;
+    closeFooterBtn.textContent = "關閉";
+  };
 
   const renderSteps = (steps: StepState[]): void => {
     const items = steps.map((step) => {
@@ -273,13 +277,11 @@ export function createLocalClipsUpdater(
     const prevStatus = currentStatus;
     currentStatus = payload.status;
     const isRunning = payload.status === "running";
+    if (isRunning) {
+      hasStartedInDialog = true;
+    }
 
-    sinceInput.disabled = isRunning;
-    autoPushCheckbox.disabled = isRunning;
-    startBtn.disabled = isRunning;
-    cancelTaskBtn.hidden = !isRunning;
-    cancelTaskBtn.disabled = false;
-    closeFooterBtn.textContent = isRunning ? "背景執行" : "關閉";
+    syncStartButtonVisibility();
 
     renderSteps(payload.steps.length > 0 ? payload.steps : getDefaultSteps());
 
@@ -373,7 +375,9 @@ export function createLocalClipsUpdater(
     renderLogs();
     connectStream();
 
-    startBtn.disabled = true;
+    hasStartedInDialog = true;
+    syncStartButtonVisibility();
+    closeFooterBtn.focus();
     statusBanner.dataset.state = "running";
     statusBanner.textContent = "正在送出執行請求...";
 
@@ -393,20 +397,11 @@ export function createLocalClipsUpdater(
         throw new Error(errBody.error ?? `啟動失敗（HTTP ${resp.status}）`);
       }
     } catch (err) {
-      startBtn.disabled = false;
+      hasStartedInDialog = false;
+      syncStartButtonVisibility();
       statusBanner.dataset.state = "failed";
       statusBanner.textContent =
         err instanceof Error ? err.message : "無法連線至本機開發伺服器外掛。";
-    }
-  });
-
-  cancelTaskBtn.addEventListener("click", async () => {
-    cancelTaskBtn.disabled = true;
-    statusBanner.textContent = "正在送出終止任務指令...";
-    try {
-      await fetch(`${API_BASE}/cancel`, { method: "POST" });
-    } catch {
-      cancelTaskBtn.disabled = false;
     }
   });
 
@@ -419,6 +414,7 @@ export function createLocalClipsUpdater(
 
   // 初始化預設步驟與背景狀態同步
   renderSteps(getDefaultSteps());
+  syncStartButtonVisibility();
   void fetch(`${API_BASE}/status`, { cache: "no-store" })
     .then(async (resp) => {
       if (!resp.ok || isDestroyed) return;
@@ -437,6 +433,10 @@ export function createLocalClipsUpdater(
   return {
     dialogElement: dialog,
     open: () => {
+      if (currentStatus !== "running") {
+        hasStartedInDialog = false;
+      }
+      syncStartButtonVisibility();
       connectStream();
       if (!dialog.open) {
         dialog.showModal();
