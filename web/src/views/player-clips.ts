@@ -638,10 +638,11 @@ export function createPlayerClipsView(
 
     exportBtn.disabled = visibleGames.length === 0;
 
+    const tableCaption = `${playerRecord.masked_name} 出賽影片集合（${sinceLabel} ~ ${untilLabel}）`;
     if (!clipsTable || tableMode !== filterMode) {
       tableMode = filterMode;
       clipsTable = createDataTable<PlayerClipMatchRecord>({
-        caption: `${playerRecord.masked_name} 出賽影片集合（${sinceLabel} ~ ${untilLabel}）`,
+        caption: tableCaption,
         columns: buildColumns(filterMode),
         rows: visibleGames,
         emptyMessage: "在目前類型篩選下無符合片段，請切換上方片段類型。",
@@ -649,6 +650,7 @@ export function createPlayerClipsView(
       });
       tableHost.replaceChildren(clipsTable.element);
     } else {
+      clipsTable.updateCaption(tableCaption);
       clipsTable.updateRows(visibleGames);
     }
   };

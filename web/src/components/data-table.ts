@@ -33,6 +33,7 @@ export interface DataTableOptions<T> {
 
 export interface DataTableController<T> {
   element: HTMLElement;
+  updateCaption: (nextCaption: string) => void;
   updateRows: (nextRows: readonly T[]) => void;
 }
 
@@ -310,6 +311,9 @@ export function createDataTable<T>(
 
   return {
     element: card,
+    updateCaption: (nextCaption) => {
+      caption.textContent = nextCaption;
+    },
     updateRows: (nextRows) => {
       renderBody(nextRows);
     },
