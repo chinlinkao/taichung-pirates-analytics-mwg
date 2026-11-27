@@ -184,6 +184,15 @@
   color: var(--color-text-muted);
 }
 
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
 dialog.filter-drawer {
   margin: auto;
   inline-size: min(94vw, 34rem);
@@ -945,4 +954,203 @@ table.data-table tbody th.is-sticky-col {
 
 .clip-pill--dual {
   box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* 9. 本機開發專屬：更新影片片段 <dialog> 視窗與狀態樣式 */
+.header-clips-sync-btn[data-updating="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+dialog.clips-updater-dialog {
+  margin: auto;
+  inline-size: min(94vw, 46rem);
+  max-block-size: 90dvh;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+}
+
+dialog.clips-updater-dialog::backdrop {
+  background-color: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.clips-updater-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.clips-updater-body {
+  gap: 0.85rem;
+}
+
+.clips-updater-lead {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.clips-cmd-wrap,
+.clips-field,
+.clips-log-wrap {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.clips-field-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.clips-cmd-preview {
+  display: block;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.clips-form-grid {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+}
+
+.clips-date-input {
+  inline-size: min(100%, 14rem);
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.clips-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.clips-checkbox-label input[type="checkbox"] {
+  inline-size: 1.05rem;
+  block-size: 1.05rem;
+  margin: 0;
+  flex: none;
+}
+
+.clips-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.clips-step-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  font-size: 0.86rem;
+  color: var(--color-text-muted);
+}
+
+.clips-step-item[data-step-status="running"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-weight: 600;
+}
+
+.clips-step-item[data-step-status="done"] {
+  border-color: color-mix(in srgb, var(--color-win) 45%, transparent);
+  color: var(--color-win);
+}
+
+.clips-step-item[data-step-status="error"] {
+  border-color: color-mix(in srgb, var(--color-loss) 45%, transparent);
+  color: var(--color-loss);
+}
+
+.clips-step-icon {
+  flex: none;
+  inline-size: 1.25rem;
+  text-align: center;
+}
+
+.clips-status-banner {
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.clips-status-banner[data-state="running"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.clips-status-banner[data-state="succeeded"] {
+  border-color: color-mix(in srgb, var(--color-win) 45%, transparent);
+  background: color-mix(in srgb, var(--color-win) 10%, transparent);
+  color: var(--color-win);
+}
+
+.clips-status-banner[data-state="failed"],
+.clips-status-banner[data-state="cancelled"] {
+  border-color: color-mix(in srgb, var(--color-loss) 45%, transparent);
+  background: color-mix(in srgb, var(--color-loss) 10%, transparent);
+  color: var(--color-loss);
+}
+
+.clips-log-output {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: #10151d;
+  color: #e6edf5;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  block-size: 12.5rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.clips-updater-footer {
+  flex-wrap: wrap;
+}
+
+.clips-cancel-btn {
+  border-color: color-mix(in srgb, var(--color-loss) 50%, transparent);
+  color: var(--color-loss);
 }

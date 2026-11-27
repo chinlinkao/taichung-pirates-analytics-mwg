@@ -13,6 +13,7 @@ export interface HeaderOptions {
   lastFetchedAt: string | null;
   activeFilterCount: number;
   manualSyncUrl?: string;
+  onOpenLocalClipsUpdater?: () => void;
   onOpenMobileFilters: () => void;
   onThemeChange?: (resolvedTheme: ResolvedTheme) => void;
 }
@@ -20,6 +21,7 @@ export interface HeaderOptions {
 export interface HeaderController {
   element: HTMLElement;
   updateFilterBadge: (count: number) => void;
+  setLocalClipsUpdating: (running: boolean) => void;
   getResolvedTheme: () => ResolvedTheme;
   destroy: () => void;
 }
@@ -146,6 +148,32 @@ export function createHeader(options: HeaderOptions): HeaderController {
     syncLink.append(syncIcon, syncText);
   }
 
+  // 僅限本機開發環境顯示的影片片段更新按鈕（正式建置由 Tree-Shaking 完全移除）
+  let clipsSyncBtn: HTMLButtonElement | null = null;
+  let clipsSyncIcon: HTMLSpanElement | null = null;
+  let clipsSyncText: HTMLSpanElement | null = null;
+  if (import.meta.env.DEV && options.onOpenLocalClipsUpdater) {
+    const openUpdater = options.onOpenLocalClipsUpdater;
+    clipsSyncBtn = document.createElement("button");
+    clipsSyncBtn.type = "button";
+    clipsSyncBtn.className = "btn header-clips-sync-btn";
+    clipsSyncBtn.setAttribute("aria-haspopup", "dialog");
+    clipsSyncBtn.title = "僅限本地端顯示：執行雙軌定位更新球員影片片段並推送至 GitHub";
+    clipsSyncBtn.setAttribute("aria-label", "更新影片片段（本機執行並推送 GitHub）");
+
+    clipsSyncIcon = document.createElement("span");
+    clipsSyncIcon.setAttribute("aria-hidden", "true");
+    clipsSyncIcon.textContent = "🎬";
+
+    clipsSyncText = document.createElement("span");
+    clipsSyncText.textContent = "更新影片片段";
+
+    clipsSyncBtn.append(clipsSyncIcon, clipsSyncText);
+    clipsSyncBtn.addEventListener("click", () => {
+      openUpdater();
+    });
+  }
+
   // 行動版篩選按鈕（含計數徽章）
   const mobileFilterBtn = document.createElement("button");
   mobileFilterBtn.type = "button";
@@ -241,20 +269,38 @@ export function createHeader(options: HeaderOptions): HeaderController {
     }
   };
 
+  const setLocalClipsUpdating = (running: boolean): void => {
+    if (!import.meta.env.DEV || !clipsSyncBtn || !clipsSyncIcon || !clipsSyncText) {
+      return;
+    }
+    clipsSyncBtn.dataset.updating = running ? "true" : "false";
+    clipsSyncIcon.textContent = running ? "⏳" : "🎬";
+    clipsSyncText.textContent = running ? "影片更新中" : "更新影片片段";
+    clipsSyncBtn.setAttribute(
+      "aria-label",
+      running ? "影片片段更新進行中（點擊開啟進度視窗）" : "更新影片片段（本機執行並推送 GitHub）"
+    );
+  };
+
   updateFilterBadge(options.activeFilterCount);
   syncThemeUi(false);
 
+  const actionNodes: Node[] = [updatedChip];
   if (syncLink) {
-    actions.append(updatedChip, syncLink, mobileFilterBtn, themeBtn);
-  } else {
-    actions.append(updatedChip, mobileFilterBtn, themeBtn);
+    actionNodes.push(syncLink);
   }
+  if (clipsSyncBtn) {
+    actionNodes.push(clipsSyncBtn);
+  }
+  actionNodes.push(mobileFilterBtn, themeBtn);
+  actions.append(...actionNodes);
   inner.append(brandGroup, actions);
   header.append(inner);
 
   return {
     element: header,
     updateFilterBadge,
+    setLocalClipsUpdating,
     getResolvedTheme,
     destroy: () => {
       mql.removeEventListener("change", handleSystemChange);

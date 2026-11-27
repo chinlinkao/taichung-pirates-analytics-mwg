@@ -150,14 +150,16 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
   let clipsPromise: Promise<void> | null = null;
 
   const ensureClipsLoaded = (forceRetry = false): void => {
-    if (clipsState.status === "ready") return;
+    if (clipsState.status === "ready" && !forceRetry) return;
     if (clipsPromise && !forceRetry) return;
     if (forceRetry) {
       clipsPromise = null;
     }
 
     clipsState = { status: "loading", clipsDataset: null, errorMessage: null };
-    clipsPromise = fetch(CLIPS_DATA_URL, { cache: "no-cache" })
+    clipsPromise = fetch(CLIPS_DATA_URL, {
+      cache: forceRetry ? "no-store" : "no-cache",
+    })
       .then(async (resp) => {
         if (!resp.ok) {
           throw new Error(`讀取球員影片集合資料失敗（HTTP ${resp.status}）`);
@@ -209,6 +211,9 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
     onReset: () => store.resetFilters(),
   });
 
+  let localUpdater: { open: () => void } | null = null;
+  let pendingOpenUpdater = false;
+
   const header = createHeader({
     lastFetchedAt: dataset.meta.last_fetched_at,
     activeFilterCount: countActiveFilterGroups(
@@ -216,6 +221,15 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
       dataset.meta.filter_options
     ),
     manualSyncUrl: LOCAL_MANUAL_SYNC_URL,
+    onOpenLocalClipsUpdater: import.meta.env.DEV
+      ? () => {
+          if (localUpdater) {
+            localUpdater.open();
+          } else {
+            pendingOpenUpdater = true;
+          }
+        }
+      : undefined,
     onOpenMobileFilters: () => filterBar.openDrawer(),
     onThemeChange: () => {
       playerProfileView.refreshTheme();
@@ -280,6 +294,27 @@ function mountApp(root: HTMLElement, dataset: PiratesDataset): void {
     footer,
     filterBar.drawerElement
   );
+
+  if (import.meta.env.DEV) {
+    void import("./components/local-clips-updater").then(
+      ({ createLocalClipsUpdater }) => {
+        const controller = createLocalClipsUpdater({
+          onRunningChange: (running) => {
+            header.setLocalClipsUpdating(running);
+          },
+          onClipsUpdated: () => {
+            ensureClipsLoaded(true);
+          },
+        });
+        localUpdater = controller;
+        root.append(controller.dialogElement);
+        if (pendingOpenUpdater) {
+          pendingOpenUpdater = false;
+          controller.open();
+        }
+      }
+    );
+  }
 
   const renderState = (state: AppState): void => {
     const teamIds = getFilteredTeamIds(dataset, state.filters, index);
