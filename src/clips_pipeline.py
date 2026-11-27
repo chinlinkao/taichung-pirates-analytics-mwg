@@ -195,6 +195,7 @@ async def run_clips_pipeline(
     force_asr: bool = False,
     parse_only: bool = False,
     align_only: bool = False,
+    refresh_html: bool = False,
     db_path: Path | str = DEFAULT_DB_PATH,
     json_output: Path | str = DEFAULT_CLIPS_OUTPUT_PATH,
 ) -> None:
@@ -212,6 +213,7 @@ async def run_clips_pipeline(
         since_date=since_date,
         match_ids=match_ids,
         parse_only=parse_only or align_only,
+        force_refresh=refresh_html,
     )
     if video_id_filter:
         games = [
@@ -282,6 +284,7 @@ def main() -> None:
     parser.add_argument("--force-asr", action="store_true", help="忽略既有語音轉錄快取，針對目標視窗強制重跑 Whisper")
     parser.add_argument("--parse-only", action="store_true", help="不連網抓 myscore.games")
     parser.add_argument("--align-only", action="store_true", help="僅使用既有本地快取重新對齊")
+    parser.add_argument("--refresh-html", action="store_true", help="強制重新下載範圍內單場 HTML 快取")
     parser.add_argument("--db", type=str, default=str(DEFAULT_DB_PATH))
     parser.add_argument("--output", type=str, default=str(DEFAULT_CLIPS_OUTPUT_PATH))
     args = parser.parse_args()
@@ -301,6 +304,7 @@ def main() -> None:
             force_asr=args.force_asr,
             parse_only=args.parse_only,
             align_only=args.align_only,
+            refresh_html=args.refresh_html,
             db_path=args.db,
             json_output=args.output,
         )

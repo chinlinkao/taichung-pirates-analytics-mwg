@@ -17,6 +17,7 @@ import re
 import sqlite3
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
@@ -220,7 +221,7 @@ def _infer_event_flags(text: str, known_players: set[str]) -> dict[str, Any]:
                 break
         if batter_name is None:
             m_b = re.match(
-                r"^([^\s，,。：:（(]{2,5}?)(?:沒有出棒|揮棒|打擊|擊出|獲得|遭到|選到|觸擊|犧牲|界外|不死)",
+                r"^([^\s，,。：:（(]{2,5}?)(?:沒有出棒|揮棒|打擊|擊出|打到|打成|獲得|遭到|選到|觸擊|犧牲|界外|不死)",
                 text,
             )
             if m_b:
@@ -434,6 +435,183 @@ def _resolve_uid(
     return None
 
 
+def _load_global_unique_players(conn: sqlite3.Connection) -> dict[str, str]:
+    """讀取全庫僅對應單一 player_uid 之遮罩姓名對照表（供跨隊支援球員備援歸戶）。"""
+    rows = conn.execute(
+        """
+        SELECT masked_name, MIN(player_uid) AS player_uid, COUNT(*) AS cnt
+        FROM players
+        WHERE player_uid != ?
+        GROUP BY masked_name
+        HAVING cnt = 1
+        """,
+        (COACH_PITCH_UID,),
+    ).fetchall()
+    return {str(r["masked_name"]).strip(): str(r["player_uid"]) for r in rows}
+
+
+def _classify_pa_boxscore_stats(text: str) -> dict[str, int]:
+    """依單一打席文字推算對應 Boxscore 統計增量（供同隊同名拆帳比對）。"""
+    is_bb = ("四壞球" in text) or ("故意四壞" in text) or ("觸身球" in text)
+    is_sac = "犧牲" in text
+    is_ab = 0 if (is_bb or is_sac) else 1
+    is_hr = 1 if "全壘打" in text else 0
+    is_3b = 1 if "三壘安打" in text else 0
+    is_2b = 1 if "二壘安打" in text else 0
+    is_1b = 1 if (("一壘安打" in text or "內野安打" in text) and not (is_hr or is_3b or is_2b)) else 0
+    is_h = 1 if (is_hr or is_3b or is_2b or is_1b) else 0
+    is_so = 1 if "三振" in text else 0
+    m_rbi = re.search(r"帶有(\d+)分打點", text)
+    rbi = int(m_rbi.group(1)) if m_rbi else 0
+    return {
+        "PA": 1,
+        "AB": is_ab,
+        "H": is_h,
+        "2B": is_2b,
+        "3B": is_3b,
+        "HR": is_hr,
+        "BB": 1 if is_bb else 0,
+        "SO": is_so,
+        "RBI": rbi,
+    }
+
+
+def _disambiguate_duplicate_batters(
+    all_batting_pas: list[tuple[str, int, str, str]],
+    bat_candidates_by_name: dict[str, list[tuple[str, dict[str, Any]]]],
+    pirate_lineup: list[dict[str, str]],
+) -> dict[tuple[str, int], str]:
+    """當同隊同場有多位同遮罩姓名打者時，依 Boxscore 統計、棒次輪轉與出現順序精準拆帳歸戶。"""
+    resolved: dict[tuple[str, int], str] = {}
+    if not all_batting_pas:
+        return resolved
+
+    slot_names: dict[int, str] = {}
+    slot_name_counts: Counter[str] = Counter()
+    for item in pirate_lineup:
+        if item["order"].isdigit():
+            slot_num = int(item["order"])
+            sname = item["masked_name"].strip()
+            if sname and sname != "無":
+                slot_names[slot_num] = sname
+                slot_name_counts[sname] += 1
+
+    lineup_len = max(slot_names.keys()) if slot_names else 9
+    if lineup_len <= 0:
+        lineup_len = 9
+
+    unique_name_to_slot = {
+        sname: snum
+        for snum, sname in slot_names.items()
+        if slot_name_counts[sname] == 1 and len(bat_candidates_by_name.get(sname, [])) <= 1
+    }
+
+    for nm, cands in bat_candidates_by_name.items():
+        if len(cands) < 2:
+            continue
+        dup_pas = [(g_idx, pa) for g_idx, pa in enumerate(all_batting_pas) if pa[2] == nm]
+        if not dup_pas:
+            continue
+
+        dup_slots = sorted(snum for snum, sname in slot_names.items() if sname == nm)
+        cand_slot: dict[int, Optional[int]] = {
+            ci: (dup_slots[ci] if ci < len(dup_slots) else None)
+            for ci in range(len(cands))
+        }
+
+        pa_inferred_slot: list[Optional[int]] = []
+        for g_idx, _ in dup_pas:
+            votes: Counter[int] = Counter()
+            for delta in (-2, -1, 1, 2):
+                ni = g_idx + delta
+                if 0 <= ni < len(all_batting_pas):
+                    nb_name = all_batting_pas[ni][2]
+                    if nb_name in unique_name_to_slot:
+                        inferred = ((unique_name_to_slot[nb_name] - 1 - delta) % lineup_len) + 1
+                        votes[inferred] += 2 if abs(delta) == 1 else 1
+            pa_inferred_slot.append(votes.most_common(1)[0][0] if votes else None)
+
+        target_pas = [
+            int(r["PA"]) if isinstance(r.get("PA"), int) else 0
+            for _, r in cands
+        ]
+        m_pa = len(dup_pas)
+        n_c = len(cands)
+
+        if sum(target_pas) == m_pa and m_pa <= 12:
+            pa_stats = [_classify_pa_boxscore_stats(pa[3]) for _, pa in dup_pas]
+            best_cost: Optional[int] = None
+            best_assign: Optional[list[int]] = None
+
+            def _backtrack(pos: int, remaining: list[int], cur: list[int]) -> None:
+                nonlocal best_cost, best_assign
+                if pos == m_pa:
+                    stat_err = 0
+                    for ci, (_, row) in enumerate(cands):
+                        assigned_idxs = [pi for pi, c_idx in enumerate(cur) if c_idx == ci]
+                        for k in ("AB", "H", "2B", "3B", "HR", "BB", "SO", "RBI"):
+                            exp = row.get(k)
+                            if isinstance(exp, int):
+                                got = sum(pa_stats[pi][k] for pi in assigned_idxs)
+                                stat_err += abs(got - exp)
+
+                    first_pos = [
+                        next((pi for pi, c_idx in enumerate(cur) if c_idx == ci), 999)
+                        for ci in range(n_c)
+                    ]
+                    order_pen = 0 if first_pos == sorted(first_pos) else 100
+                    slot_pen = 0
+                    for pi, c_idx in enumerate(cur):
+                        exp_s = cand_slot[c_idx]
+                        inf_s = pa_inferred_slot[pi]
+                        if exp_s is not None and inf_s is not None and exp_s != inf_s:
+                            slot_pen += 10
+                    consec_pen = sum(
+                        5
+                        for pi in range(1, m_pa)
+                        if cur[pi] == cur[pi - 1] and cand_slot[cur[pi]] is not None
+                    )
+                    cost = stat_err * 50 + order_pen + slot_pen + consec_pen
+                    if best_cost is None or cost < best_cost:
+                        best_cost = cost
+                        best_assign = list(cur)
+                    return
+
+                for ci in range(n_c):
+                    if remaining[ci] > 0:
+                        remaining[ci] -= 1
+                        cur.append(ci)
+                        _backtrack(pos + 1, remaining, cur)
+                        cur.pop()
+                        remaining[ci] += 1
+
+            _backtrack(0, list(target_pas), [])
+            if best_assign is not None:
+                for pi, c_idx in enumerate(best_assign):
+                    hl, ev_idx, _, _ = dup_pas[pi][1]
+                    resolved[(hl, ev_idx)] = cands[c_idx][0]
+                continue
+
+        # 備援分配（PA 總數不一致或超過 12 打席）：優先比對推斷棒次並按剩餘 PA 配額輪轉
+        rem_quota = [max(0, tp) for tp in target_pas]
+        for pi, (_, (hl, ev_idx, _, _)) in enumerate(dup_pas):
+            inf_s = pa_inferred_slot[pi]
+            chosen_ci: Optional[int] = None
+            if inf_s is not None:
+                for ci in range(n_c):
+                    if cand_slot[ci] == inf_s and rem_quota[ci] > 0:
+                        chosen_ci = ci
+                        break
+            if chosen_ci is None:
+                avail = [ci for ci in range(n_c) if rem_quota[ci] > 0]
+                chosen_ci = avail[0] if avail else (pi % n_c)
+            if rem_quota[chosen_ci] > 0:
+                rem_quota[chosen_ci] -= 1
+            resolved[(hl, ev_idx)] = cands[chosen_ci][0]
+
+    return resolved
+
+
 def extract_all_players_involvement(
     match_meta: dict[str, Any],
     record_data: dict[str, Any],
@@ -458,16 +636,25 @@ def extract_all_players_involvement(
     game_name_to_uid: dict[str, str] = {}
     boxscore_bat_by_uid: dict[str, dict[str, Any]] = {}
     boxscore_pitch_by_uid: dict[str, dict[str, Any]] = {}
+    bat_candidates_by_name: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    seen_bat_uids_by_name: dict[str, set[str]] = {}
+    starting_pitcher_uid: Optional[str] = None
 
     for r in bat_rows:
         uid = _resolve_uid(r["masked_name"], r.get("jersey_number"), by_jersey_name, by_name)
         if uid:
             boxscore_bat_by_uid[uid] = r
             game_name_to_uid.setdefault(r["masked_name"], uid)
+            seen_uids = seen_bat_uids_by_name.setdefault(r["masked_name"], set())
+            if uid not in seen_uids:
+                seen_uids.add(uid)
+                bat_candidates_by_name.setdefault(r["masked_name"], []).append((uid, r))
 
     for r in pitch_rows:
         uid = _resolve_uid(r["masked_name"], r.get("jersey_number"), by_jersey_name, by_name)
         if uid:
+            if starting_pitcher_uid is None:
+                starting_pitcher_uid = uid
             boxscore_pitch_by_uid[uid] = r
             game_name_to_uid.setdefault(r["masked_name"], uid)
 
@@ -483,6 +670,8 @@ def extract_all_players_involvement(
     for mname, uids in by_name.items():
         if len(uids) == 1 and mname not in game_name_to_uid:
             game_name_to_uid[mname] = uids[0]
+
+    global_unique_by_name = _load_global_unique_players(conn)
 
     # 2. 追蹤每位海盜球員當場守位與產出明細
     player_events: dict[str, dict[str, Any]] = {}
@@ -506,11 +695,30 @@ def extract_all_players_involvement(
 
     active_pos_by_uid: dict[str, Optional[str]] = {}
     pos_uncertain_uids: set[str] = set()
+    lineup_uid_map: dict[tuple[str, str], str] = {}
+    consumed_cand_idx: dict[str, int] = {}
+
     for item in pirate_lineup:
-        uid = game_name_to_uid.get(item["masked_name"])
+        mname = item["masked_name"]
+        if item["order"] == "投手":
+            if starting_pitcher_uid and (
+                (boxscore_pitch_by_uid.get(starting_pitcher_uid) or {}).get("masked_name") == mname
+            ):
+                uid = starting_pitcher_uid
+            else:
+                uid = game_name_to_uid.get(mname) or global_unique_by_name.get(mname)
+        else:
+            cands = bat_candidates_by_name.get(mname, [])
+            if len(cands) >= 2 and item["order"].isdigit():
+                c_idx = consumed_cand_idx.get(mname, 0)
+                uid = cands[c_idx][0] if c_idx < len(cands) else cands[-1][0]
+                consumed_cand_idx[mname] = c_idx + 1
+            else:
+                uid = game_name_to_uid.get(mname) or global_unique_by_name.get(mname)
         if not uid:
             continue
-        pe = ensure_player(uid, item["masked_name"])
+        lineup_uid_map[(item["order"], mname)] = uid
+        pe = ensure_player(uid, mname)
         if item["order"] != "投手" or pe["starting_position"] is None:
             pe["starting_position"] = item["position"]
         active_pos_by_uid[uid] = item["position"]
@@ -520,6 +728,23 @@ def extract_all_players_involvement(
     for uid, row in boxscore_pitch_by_uid.items():
         ensure_player(uid, row["masked_name"])
 
+    all_batting_pas: list[tuple[str, int, str, str]] = []
+    for hi in text_data["half_innings"]:
+        if hi["half_side"] == batting_half:
+            for ev in hi["events"]:
+                if ev["is_plate_appearance"] and ev["batter_name"]:
+                    all_batting_pas.append(
+                        (hi["half_label"], int(ev["event_index"]), ev["batter_name"], ev["text"])
+                    )
+
+    disambiguated_pa_uid = _disambiguate_duplicate_batters(
+        all_batting_pas,
+        bat_candidates_by_name,
+        pirate_lineup,
+    )
+
+    event_batter_uids: dict[tuple[str, int], str] = {}
+    event_pitcher_uids: dict[tuple[str, int], str] = {}
     current_pitcher_uid: Optional[str] = None
 
     for hi in text_data["half_innings"]:
@@ -532,9 +757,15 @@ def extract_all_players_involvement(
             for idx, ev in enumerate(events):
                 if ev["is_plate_appearance"] and ev["batter_name"]:
                     bname = ev["batter_name"]
-                    uid = game_name_to_uid.get(bname)
+                    ev_idx = int(ev["event_index"])
+                    uid = (
+                        disambiguated_pa_uid.get((hlabel, ev_idx))
+                        or game_name_to_uid.get(bname)
+                        or global_unique_by_name.get(bname)
+                    )
                     if not uid:
                         continue
+                    event_batter_uids[(hlabel, ev_idx)] = uid
                     pe = ensure_player(uid, bname)
                     runner_notes: list[str] = []
                     for nxt in events[idx + 1 :]:
@@ -561,10 +792,13 @@ def extract_all_players_involvement(
                 if ev["is_pitching_change"]:
                     p_name = ev["pitcher_name"]
                     p_jersey = ev.get("pitcher_jersey")
-                    p_uid = _resolve_uid(p_name, p_jersey, by_jersey_name, by_name) or (
-                        game_name_to_uid.get(p_name) if p_name else None
+                    p_uid = (
+                        _resolve_uid(p_name, p_jersey, by_jersey_name, by_name)
+                        or (game_name_to_uid.get(p_name) if p_name else None)
+                        or (global_unique_by_name.get(p_name) if p_name else None)
                     )
                     if p_uid and p_name:
+                        event_pitcher_uids[(hlabel, int(ev["event_index"]))] = p_uid
                         ensure_player(p_uid, p_name)
                         if current_pitcher_uid and current_pitcher_uid != p_uid:
                             if active_pos_by_uid.get(current_pitcher_uid) == "投":
@@ -633,6 +867,9 @@ def extract_all_players_involvement(
 
     return {
         "game_name_to_uid": game_name_to_uid,
+        "lineup_uid_map": lineup_uid_map,
+        "event_batter_uids": event_batter_uids,
+        "event_pitcher_uids": event_pitcher_uids,
         "lineups": text_data["lineups"],
         "half_innings": text_data["half_innings"],
         "players": player_events,
@@ -651,6 +888,9 @@ def _store_match_events_to_db(
     pirate_side = match_meta["pirate_side"]
     batting_half = "TOP" if pirate_side == "away" else "BOT"
     name_to_uid = parsed["game_name_to_uid"]
+    lineup_uid_map = parsed.get("lineup_uid_map", {})
+    event_batter_uids = parsed.get("event_batter_uids", {})
+    event_pitcher_uids = parsed.get("event_pitcher_uids", {})
 
     with conn:
         conn.execute("DELETE FROM match_lineups WHERE match_id = ?", (match_id,))
@@ -659,7 +899,14 @@ def _store_match_events_to_db(
         for lu_team, items in parsed["lineups"].items():
             is_pirate_lu = normalize_team_name(lu_team) == normalize_team_name(team_name)
             for item in items:
-                p_uid = name_to_uid.get(item["masked_name"]) if is_pirate_lu else None
+                p_uid = (
+                    (
+                        lineup_uid_map.get((item["order"], item["masked_name"]))
+                        or name_to_uid.get(item["masked_name"])
+                    )
+                    if is_pirate_lu
+                    else None
+                )
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO match_lineups (
@@ -679,9 +926,25 @@ def _store_match_events_to_db(
         for hi in parsed["half_innings"]:
             inning = int(hi["inning"])
             half_side = hi["half_side"]
+            hlabel = hi["half_label"]
             for ev in hi["events"]:
-                b_uid = name_to_uid.get(ev["batter_name"]) if (half_side == batting_half and ev.get("batter_name")) else None
-                p_uid = name_to_uid.get(ev["pitcher_name"]) if (half_side != batting_half and ev.get("pitcher_name")) else None
+                ev_idx = int(ev["event_index"])
+                b_uid = (
+                    (
+                        event_batter_uids.get((hlabel, ev_idx))
+                        or name_to_uid.get(ev["batter_name"])
+                    )
+                    if (half_side == batting_half and ev.get("batter_name"))
+                    else None
+                )
+                p_uid = (
+                    (
+                        event_pitcher_uids.get((hlabel, ev_idx))
+                        or name_to_uid.get(ev["pitcher_name"])
+                    )
+                    if (half_side != batting_half and ev.get("pitcher_name"))
+                    else None
+                )
                 conn.execute(
                     """
                     INSERT INTO match_events (
@@ -694,7 +957,7 @@ def _store_match_events_to_db(
                         match_id,
                         inning,
                         half_side,
-                        int(ev["event_index"]),
+                        ev_idx,
                         ev["event_type"],
                         b_uid,
                         ev.get("batter_name"),
@@ -709,12 +972,101 @@ def _store_match_events_to_db(
                 )
 
 
+def _detect_stale_partial_match_ids(
+    conn: sqlite3.Connection,
+    match_rows: list[dict[str, Any]],
+    cache_dir: Path,
+    raw_team_html_dir: Path = Path("data/raw_html"),
+) -> set[int]:
+    """偵測賽季總打席大於快取加總且單場得分缺漏／快取過期之半成品場次。"""
+    stale_ids: set[int] = set()
+    target_team_ids = {int(m["team_id"]) for m in match_rows}
+    rows_by_team: dict[int, list[dict[str, Any]]] = {}
+    for m in match_rows:
+        rows_by_team.setdefault(int(m["team_id"]), []).append(m)
+
+    for tid in target_team_ids:
+        season_pa_row = conn.execute(
+            """
+            SELECT COALESCE(SUM(pa), 0) AS total_pa
+            FROM team_batting_stats
+            WHERE team_id = ? AND player_uid != ?
+            """,
+            (tid, COACH_PITCH_UID),
+        ).fetchone()
+        season_pa = int(season_pa_row["total_pa"]) if season_pa_row else 0
+        if season_pa <= 0:
+            continue
+
+        all_team_matches = conn.execute(
+            """
+            SELECT m.id AS match_id, m.league_id, m.boxscore_url, t.team_name
+            FROM matches m
+            JOIN teams t ON m.team_id = t.team_id
+            WHERE m.team_id = ? AND m.boxscore_url IS NOT NULL
+            """,
+            (tid,),
+        ).fetchall()
+
+        cached_team_pa = 0
+        for tm in all_team_matches:
+            site_id = extract_site_match_id(tm["boxscore_url"]) or str(tm["match_id"])
+            rec_path = cache_dir / f"{tm['league_id']}_{site_id}_record.html"
+            if not rec_path.exists():
+                continue
+            rec_data = parse_show_record_html(rec_path.read_text(encoding="utf-8"))
+            bat_key = _find_team_key(rec_data["batting_by_team"], tm["team_name"])
+            bat_rows = rec_data["batting_by_team"].get(bat_key, []) if bat_key else []
+            cached_team_pa += sum(r["PA"] for r in bat_rows if isinstance(r.get("PA"), int))
+
+        if season_pa <= cached_team_pa:
+            continue
+
+        for m in rows_by_team.get(tid, []):
+            if m.get("away_score") is None or m.get("home_score") is None:
+                continue
+            site_id = extract_site_match_id(m["boxscore_url"]) or str(m["match_id"])
+            rec_path = cache_dir / f"{m['league_id']}_{site_id}_record.html"
+            txt_path = cache_dir / f"{m['league_id']}_{site_id}_text.html"
+            if not (rec_path.exists() and txt_path.exists()):
+                continue
+
+            rec_data = parse_show_record_html(rec_path.read_text(encoding="utf-8"))
+            away_key = _find_team_key(rec_data["batting_by_team"], m["away_team"])
+            home_key = _find_team_key(rec_data["batting_by_team"], m["home_team"])
+            away_box_r = (
+                sum(r["R"] for r in rec_data["batting_by_team"].get(away_key, []) if isinstance(r.get("R"), int))
+                if away_key
+                else None
+            )
+            home_box_r = (
+                sum(r["R"] for r in rec_data["batting_by_team"].get(home_key, []) if isinstance(r.get("R"), int))
+                if home_key
+                else None
+            )
+            score_incomplete = (
+                (away_box_r is not None and away_box_r < int(m["away_score"]))
+                or (home_box_r is not None and home_box_r < int(m["home_score"]))
+            )
+            team_html_path = raw_team_html_dir / f"{m['league_id']}_{tid}.html"
+            cache_older_than_team = (
+                team_html_path.exists()
+                and txt_path.stat().st_mtime < team_html_path.stat().st_mtime
+            )
+            if score_incomplete or cache_older_than_team:
+                stale_ids.add(int(m["match_id"]))
+
+    return stale_ids
+
+
 def fetch_and_parse_matches(
     db_path: Path | str = DEFAULT_DB_PATH,
     since_date: Optional[str] = "2026-10-01",
     match_ids: Optional[list[int]] = None,
     parse_only: bool = False,
+    force_refresh: bool = False,
     cache_dir: Path = DEFAULT_MATCH_HTML_DIR,
+    raw_team_html_dir: Path = Path("data/raw_html"),
 ) -> list[dict[str, Any]]:
     """抓取（若無快取）並解析指定範圍之所有比賽，回傳含全部海盜出場球員事件的清單。"""
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -759,7 +1111,17 @@ def fetch_and_parse_matches(
             ).fetchall()
             videos_by_match[m["match_id"]] = [dict(v) for v in vrows]
 
-        # 下載尚缺或已開賽但仍為空紀錄之 HTML 快取（間隔 >= 1.6s）
+        # 下載尚缺或已開賽但仍為空紀錄／半成品之 HTML 快取（間隔 >= 1.6s）
+        stale_partial_ids = (
+            set()
+            if parse_only
+            else _detect_stale_partial_match_ids(
+                conn,
+                match_rows,
+                cache_dir=cache_dir,
+                raw_team_html_dir=raw_team_html_dir,
+            )
+        )
         to_fetch: list[tuple[str, Path]] = []
         seen_paths: set[Path] = set()
         for m in match_rows:
@@ -772,10 +1134,14 @@ def fetch_and_parse_matches(
                 if not parse_show_text_html(txt_path.read_text(encoding="utf-8"), set())["half_innings"]:
                     is_stale_empty = True
 
+            need_refresh = (
+                not parse_only
+                and (force_refresh or is_stale_empty or int(m["match_id"]) in stale_partial_ids)
+            )
             for url, p in ((m["boxscore_url"], rec_path), (m["pbp_url"], txt_path)):
                 if p not in seen_paths:
                     seen_paths.add(p)
-                    if url and (not p.exists() or is_stale_empty):
+                    if url and (not p.exists() or need_refresh):
                         to_fetch.append((url, p))
 
         if to_fetch and not parse_only:
@@ -867,9 +1233,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="解析官網單場攻守與文字紀錄並入庫")
     parser.add_argument("--since", type=str, default="2026-10-01", help="起始比賽日期 (YYYY-MM-DD)")
     parser.add_argument("--parse-only", action="store_true", help="僅使用本地 HTML 快取解析")
+    parser.add_argument("--refresh-html", action="store_true", help="強制重新下載範圍內單場 HTML 快取")
     args = parser.parse_args()
 
-    games = fetch_and_parse_matches(since_date=args.since, parse_only=args.parse_only)
+    games = fetch_and_parse_matches(
+        since_date=args.since,
+        parse_only=args.parse_only,
+        force_refresh=args.refresh_html,
+    )
     total_pas = sum(len(p["plate_appearances"]) for g in games for p in g["players"].values())
     total_pits = sum(len(p["pitching_stints"]) for g in games for p in g["players"].values())
     total_flds = sum(len(p["fielding_plays"]) for g in games for p in g["players"].values())
