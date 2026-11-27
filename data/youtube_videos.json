@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-27T10:07:34Z",
+  "updated_at": "2026-11-27T16:34:04Z",
   "videos": {
     "-Onb2HuiG6M": {
       "video_id": "-Onb2HuiG6M",
@@ -3168,6 +3168,22 @@
       "part_label": null,
       "is_match_video": 0,
       "fetched_at": "2026-11-25T06:15:28Z"
+    },
+    "jFrqeLXvQW0": {
+      "video_id": "jFrqeLXvQW0",
+      "channel_id": "UCPV6fPtF1DjGid4uxduEgYA",
+      "channel_handle": "@justbestgames6021",
+      "source_tab": "videos",
+      "title": "【臺中U10小聯盟】G20 SVP #3(台中小海盜(黑))&G21SVP #17(台中小海盜(黑))",
+      "url": "https://www.youtube.com/watch?v=jFrqeLXvQW0",
+      "duration_sec": 102,
+      "is_live_content": null,
+      "broadcast_start_utc": null,
+      "broadcast_date_iso": null,
+      "broadcast_time": null,
+      "part_label": null,
+      "is_match_video": 0,
+      "fetched_at": "2026-11-27T16:34:04Z"
     },
     "jo6bGPChSCs": {
       "video_id": "jo6bGPChSCs",
