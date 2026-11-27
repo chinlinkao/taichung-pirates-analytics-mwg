@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-26T10:02:46Z",
+  "updated_at": "2026-11-27T01:41:16Z",
   "videos": {
     "-Onb2HuiG6M": {
       "video_id": "-Onb2HuiG6M",
@@ -1521,6 +1521,22 @@
       "is_match_video": 1,
       "fetched_at": "2026-11-25T06:15:28Z"
     },
+    "M6LZp9p9pic": {
+      "video_id": "M6LZp9p9pic",
+      "channel_id": "UCPV6fPtF1DjGid4uxduEgYA",
+      "channel_handle": "@justbestgames6021",
+      "source_tab": "videos",
+      "title": "【臺中U15】G15 MVP #30(台中海盜)&G16 SVP #24(台中海盜)",
+      "url": "https://www.youtube.com/watch?v=M6LZp9p9pic",
+      "duration_sec": 52,
+      "is_live_content": null,
+      "broadcast_start_utc": null,
+      "broadcast_date_iso": null,
+      "broadcast_time": null,
+      "part_label": null,
+      "is_match_video": 0,
+      "fetched_at": "2026-11-27T01:41:16Z"
+    },
     "MFqWqA6gkLM": {
       "video_id": "MFqWqA6gkLM",
       "channel_id": "UCPV6fPtF1DjGid4uxduEgYA",
@@ -2416,6 +2432,22 @@
       "part_label": null,
       "is_match_video": 1,
       "fetched_at": "2026-11-25T06:15:28Z"
+    },
+    "_79yWOpLsrM": {
+      "video_id": "_79yWOpLsrM",
+      "channel_id": "UCPV6fPtF1DjGid4uxduEgYA",
+      "channel_handle": "@justbestgames6021",
+      "source_tab": "videos",
+      "title": "【臺中U12小聯盟】G15 SVP #68(台中小海盜)＆G16 SVP #14(台中小海盜)",
+      "url": "https://www.youtube.com/watch?v=_79yWOpLsrM",
+      "duration_sec": 68,
+      "is_live_content": null,
+      "broadcast_start_utc": null,
+      "broadcast_date_iso": null,
+      "broadcast_time": null,
+      "part_label": null,
+      "is_match_video": 0,
+      "fetched_at": "2026-11-27T01:41:16Z"
     },
     "_L0x_dlWv1o": {
       "video_id": "_L0x_dlWv1o",
