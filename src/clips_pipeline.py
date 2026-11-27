@@ -105,23 +105,69 @@ def store_player_clips_to_db(
     conn: sqlite3.Connection,
     clips_by_match: dict[int, list[dict[str, Any]]],
 ) -> int:
-    """將對齊結果冪等寫入 SQLite player_video_clips。"""
+    """將對齊結果冪等寫入 SQLite player_video_clips（保留既有流水號 id）。"""
     total = 0
     with conn:
         for match_id, clist in clips_by_match.items():
-            conn.execute("DELETE FROM player_video_clips WHERE match_id = ?", (match_id,))
+            mid = int(match_id)
+            existing_rows = conn.execute(
+                """
+                SELECT id, player_uid, clip_type, inning, half_side, event_index
+                FROM player_video_clips
+                WHERE match_id = ?
+                """,
+                (mid,),
+            ).fetchall()
+
+            new_keys = {
+                (
+                    str(c["player_uid"]),
+                    str(c["clip_type"]),
+                    int(c["inning"]),
+                    str(c["half_side"]),
+                    int(c["event_index"]),
+                )
+                for c in clist
+            }
+
+            stale_ids = [
+                (int(r[0]),)
+                for r in existing_rows
+                if (str(r[1]), str(r[2]), int(r[3]), str(r[4]), int(r[5])) not in new_keys
+            ]
+            if stale_ids:
+                conn.executemany(
+                    "DELETE FROM player_video_clips WHERE id = ?",
+                    stale_ids,
+                )
+
             for c in clist:
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO player_video_clips (
+                    INSERT INTO player_video_clips (
                         match_id, player_uid, video_id, clip_type,
                         inning, half_side, event_index,
                         label_short, event_detail, start_sec,
                         align_method, confidence
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(match_id, player_uid, clip_type, inning, half_side, event_index)
+                    DO UPDATE SET
+                        video_id = excluded.video_id,
+                        label_short = excluded.label_short,
+                        event_detail = excluded.event_detail,
+                        start_sec = excluded.start_sec,
+                        align_method = excluded.align_method,
+                        confidence = excluded.confidence
+                    WHERE
+                        video_id IS NOT excluded.video_id
+                        OR label_short IS NOT excluded.label_short
+                        OR event_detail IS NOT excluded.event_detail
+                        OR start_sec IS NOT excluded.start_sec
+                        OR align_method IS NOT excluded.align_method
+                        OR confidence IS NOT excluded.confidence
                     """,
                     (
-                        int(c["match_id"]),
+                        mid,
                         c["player_uid"],
                         c["video_id"],
                         c["clip_type"],

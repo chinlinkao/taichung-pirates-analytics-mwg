@@ -151,21 +151,46 @@ function validateStartParams(body: Record<string, unknown>): StartParams {
   };
 }
 
-function normalizeClipsSnapshot(jsonPath: string): string | null {
-  if (!existsSync(jsonPath)) {
-    return null;
-  }
+export function normalizeClipsJsonText(raw: string): string | null {
   try {
-    const raw = readFileSync(jsonPath, "utf-8");
-    const parsed = JSON.parse(raw) as { meta?: Record<string, unknown>; [key: string]: unknown };
+    const parsed = JSON.parse(raw) as {
+      meta?: Record<string, unknown>;
+      players?: Record<string, { matches?: Array<Record<string, unknown>> }>;
+      [key: string]: unknown;
+    };
     if (parsed.meta && typeof parsed.meta === "object") {
       const { generated_at: _ignored, ...restMeta } = parsed.meta;
       parsed.meta = restMeta;
+    }
+    if (parsed.players && typeof parsed.players === "object") {
+      for (const player of Object.values(parsed.players)) {
+        if (!player || !Array.isArray(player.matches)) continue;
+        for (const match of player.matches) {
+          for (const clipKey of ["batting_clips", "pitching_clips", "fielding_clips"] as const) {
+            const list = match[clipKey];
+            if (!Array.isArray(list)) continue;
+            match[clipKey] = list.map((item) => {
+              if (item && typeof item === "object" && !Array.isArray(item)) {
+                const { id: _clipId, ...restClip } = item as Record<string, unknown>;
+                return restClip;
+              }
+              return item;
+            });
+          }
+        }
+      }
     }
     return JSON.stringify(parsed);
   } catch {
     return null;
   }
+}
+
+function normalizeClipsSnapshot(jsonPath: string): string | null {
+  if (!existsSync(jsonPath)) {
+    return null;
+  }
+  return normalizeClipsJsonText(readFileSync(jsonPath, "utf-8"));
 }
 
 function hasUnmergedConflict(porcelainOutput: string): boolean {
