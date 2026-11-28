@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-28T01:41:24Z",
+  "updated_at": "2026-11-28T09:26:23Z",
   "videos": {
     "-Onb2HuiG6M": {
       "video_id": "-Onb2HuiG6M",
@@ -1200,6 +1200,22 @@
       "part_label": null,
       "is_match_video": 0,
       "fetched_at": "2026-11-25T06:15:28Z"
+    },
+    "H_RKBVPEom0": {
+      "video_id": "H_RKBVPEom0",
+      "channel_id": "UCZBmgBnKf1GOFEGq1tMdJcg",
+      "channel_handle": "@就是棒-臺中桃園高雄",
+      "source_tab": "streams",
+      "title": "【臺中U10 大聯盟】G18 台中小海盜 vs 東海河馬",
+      "url": "https://www.youtube.com/watch?v=H_RKBVPEom0",
+      "duration_sec": 5106,
+      "is_live_content": 1,
+      "broadcast_start_utc": null,
+      "broadcast_date_iso": null,
+      "broadcast_time": null,
+      "part_label": null,
+      "is_match_video": 1,
+      "fetched_at": "2026-11-28T09:26:23Z"
     },
     "Hco8zfeR49E": {
       "video_id": "Hco8zfeR49E",
@@ -4271,7 +4287,7 @@
       "broadcast_time": null,
       "part_label": null,
       "is_match_video": 1,
-      "fetched_at": "2026-11-28T01:41:24Z"
+      "fetched_at": "2026-11-28T09:26:23Z"
     },
     "xfu0r8bxRSk": {
       "video_id": "xfu0r8bxRSk",
