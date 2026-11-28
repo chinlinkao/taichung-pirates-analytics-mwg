@@ -1039,25 +1039,49 @@ def align_game_all_players(
                 }
 
         last_pa_end = h_start
-        for ev in events:
+        for idx_ev, ev in enumerate(events):
             key = (hlabel, ev["event_index"])
             if key in ev_time_map:
                 last_pa_end = ev_time_map[key]["pa_end_sec"]
             else:
                 ob = ev_bucket_map.get(ev["event_index"], 0)
                 r_s, r_e = bucket_ranges[ob]
+                has_later_pa_in_bucket = any(
+                    e["is_plate_appearance"] and ev_bucket_map.get(e["event_index"], 0) == ob
+                    for e in events[idx_ev + 1 :]
+                )
+                next_pa_start = next(
+                    (
+                        ev_time_map[(hlabel, e["event_index"])]["pa_start_sec"]
+                        for e in events[idx_ev + 1 :]
+                        if (hlabel, e["event_index"]) in ev_time_map
+                    ),
+                    None,
+                )
+                if ev["outs_delta"] > 0 and not has_later_pa_in_bucket:
+                    ev_start = max(r_s, last_pa_end)
+                    ev_end = r_e
+                else:
+                    upper_cap = min(r_e, next_pa_start) if next_pa_start is not None else r_e
+                    ev_start = min(upper_cap, max(r_s, last_pa_end))
+                    ev_end = min(upper_cap, ev_start + 10)
+                    last_pa_end = max(last_pa_end, ev_end)
+
+                if is_asr_half:
+                    ev_method, ev_conf = "asr_half_interp", "low"
+                elif is_interp_half:
+                    ev_method, ev_conf = "bracket_interp", "low"
+                else:
+                    ev_method, ev_conf = "scorebug_anchor_interp", "medium"
+
                 ev_time_map[key] = {
                     "video_id": vid,
                     "half_start_sec": h_start,
                     "half_end_sec": h_end,
-                    "pa_start_sec": max(r_s, last_pa_end),
-                    "pa_end_sec": r_e if ev["outs_delta"] > 0 else min(r_e, last_pa_end + 10),
-                    "method": (
-                        "asr_half_interp"
-                        if is_asr_half
-                        else ("bracket_interp" if is_interp_half else "scorebug_anchor_interp")
-                    ),
-                    "confidence": "low" if is_interp_half else "medium",
+                    "pa_start_sec": ev_start,
+                    "pa_end_sec": ev_end,
+                    "method": ev_method,
+                    "confidence": ev_conf,
                 }
 
     # 組裝全場所有海盜球員的片段

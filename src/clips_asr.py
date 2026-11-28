@@ -1223,12 +1223,19 @@ def _transcribe_audio_windows(
 
 
 def _extract_opponent_batter_from_fielding(detail: str) -> Optional[str]:
-    """從守備文字開頭萃取對手打者遮罩姓名（如 '王〇彬擊出球...' -> '王〇彬'）。"""
+    """從守備文字開頭萃取對手打者或壘上跑者遮罩姓名（如 '王〇彬擊出球...' -> '王〇彬'）。"""
+    cleaned = detail.strip()
     m = re.match(
         r"^([^\s，,。：:（(]{2,5}?)(?:沒有出棒|揮棒|打擊|擊出|打到|打成|觸擊|犧牲|遭到|獲得)",
-        detail.strip(),
+        cleaned,
     )
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    m_runner = re.match(
+        r"^壘上跑者([^\s，,。：:（(]{2,5}?)(?:在|因|試圖|盜|被|遭)",
+        cleaned,
+    )
+    return m_runner.group(1) if m_runner else None
 
 
 def _build_half_window_map(
@@ -1486,7 +1493,7 @@ def _solve_batting_dp(
 
         matcher = matchers_by_uid.get(c["player_uid"])
         raw_cands: list[dict[str, Any]] = []
-        is_interp_clip = c["align_method"] in ("bracket_interp", "asr_half_interp")
+        is_interp_clip = c["align_method"] in ("bracket_interp", "asr_half_interp", "scorebug_half_interp")
         orig_t = float(c["start_sec"])
         rem_after = n_pa - 1 - idx_c
 
@@ -1683,7 +1690,7 @@ def _refine_pitching_clips(
                 min_pitch_sec = max(min_pitch_sec, float(pc["start_sec"]) + 8.0)
                 continue
             matcher = matchers_by_uid.get(pc["player_uid"])
-            is_interp = pc["align_method"] in ("bracket_interp", "asr_half_interp", "asr_half_start")
+            is_interp = pc["align_method"] in ("bracket_interp", "asr_half_interp", "asr_half_start", "scorebug_half_interp")
             cur_est = float(pc["start_sec"])
             s_lo, s_hi = min_pitch_sec, float(eff_end + 10)
 
@@ -1754,7 +1761,7 @@ def _extract_fielding_action_keywords(detail: str) -> tuple[str, ...]:
     if "接殺" in detail:
         return ("接殺", "飛球", "美技")
     if "觸殺" in detail or "夾殺" in detail:
-        return ("觸殺", "夾殺")
+        return ("觸殺", "夾殺", "阻殺", "抓到", "出局", "刺殺", "盜壘失敗")
     return ("傳一壘", "傳向一壘", "刺殺", "封殺", "滾地", "接到", "出局")
 
 
@@ -1811,7 +1818,7 @@ def _refine_fielding_clips(
 
             rep = non_high_clips[0]
             cur_est = float(rep["start_sec"])
-            is_interp = rep["align_method"] in ("bracket_interp", "asr_half_interp")
+            is_interp = rep["align_method"] in ("bracket_interp", "asr_half_interp", "scorebug_half_interp")
             rem_after = n_ev - 1 - idx_e
             if is_interp:
                 search_lo = max(float(eff_start), cur_est - 120.0) if (h_end - h_start) > 180 else float(eff_start)
@@ -1821,8 +1828,9 @@ def _refine_fielding_clips(
                 search_hi = min(float(eff_end), cur_est + 60.0)
 
             raw_cands: list[dict[str, Any]] = []
+            is_runner_fielding = rep["event_detail"].strip().startswith("壘上跑者")
 
-            # 通道 F1：對手打者遮罩姓名同音＋背號＋先發棒次
+            # 通道 F1：對手打者／跑者遮罩姓名同音＋背號＋先發棒次
             opp_name = _extract_opponent_batter_from_fielding(rep["event_detail"])
             if opp_name:
                 opp_m = opp_matcher_cache.get(opp_name)
@@ -1840,9 +1848,20 @@ def _refine_fielding_clips(
                     st = float(s["start"])
                     if st < search_lo or st > search_hi:
                         continue
-                    if _is_prompt_hallucination(str(s.get("text") or "")):
+                    txt_s = str(s.get("text") or "")
+                    if _is_prompt_hallucination(txt_s):
                         continue
                     for ms in _find_player_matches_in_text(s["text"], opp_m):
+                        if is_runner_fielding:
+                            if ms["reason"] == "order_only":
+                                continue
+                            has_bat_intro = any(kw in txt_s for kw in ("輪到", "打擊", "棒"))
+                            has_play_cue = any(
+                                kw in txt_s
+                                for kw in ("跑者", "跑壘", "本壘", "盜壘", "盜", "觸殺", "夾殺", "阻殺", "出局", "牽制", "抓到")
+                            )
+                            if has_bat_intro and not has_play_cue:
+                                continue
                         ex_sec = _resolve_match_timestamp(s, ms["char_pos"])
                         est_s = max(0.0, ex_sec - 3.0)
                         raw_cands.append(
@@ -1881,9 +1900,9 @@ def _refine_fielding_clips(
                     if any(ak in merged_txt for ak in action_kws):
                         raw_cands.append(
                             {
-                                "start_sec": max(0.0, st - 10.0),
+                                "start_sec": max(0.0, st - (4.0 if is_runner_fielding else 10.0)),
                                 "exact_sec": st,
-                                "raw_score": 85.0,
+                                "raw_score": 92.0 if is_runner_fielding else 85.0,
                                 "is_fixed": False,
                                 "seg": s,
                             }

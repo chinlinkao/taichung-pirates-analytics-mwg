@@ -111,23 +111,38 @@ def apply_manual_overrides(
     return applied
 
 
+_CONF_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+
+
 def store_player_clips_to_db(
     conn: sqlite3.Connection,
     clips_by_match: dict[int, list[dict[str, Any]]],
+    preserve_higher_confidence: bool = True,
 ) -> int:
-    """將對齊結果冪等寫入 SQLite player_video_clips（保留既有流水號 id）。"""
+    """將對齊結果冪等寫入 SQLite player_video_clips（保留既有流水號 id；預設不降級覆寫較高信心度）。"""
     total = 0
     with conn:
         for match_id, clist in clips_by_match.items():
             mid = int(match_id)
             existing_rows = conn.execute(
                 """
-                SELECT id, player_uid, clip_type, inning, half_side, event_index
+                SELECT id, player_uid, clip_type, inning, half_side, event_index,
+                       video_id, start_sec, align_method, confidence
                 FROM player_video_clips
                 WHERE match_id = ?
                 """,
                 (mid,),
             ).fetchall()
+
+            existing_by_key = {
+                (str(r[1]), str(r[2]), int(r[3]), str(r[4]), int(r[5])): (
+                    str(r[6]),
+                    int(r[7]),
+                    str(r[8]),
+                    str(r[9]),
+                )
+                for r in existing_rows
+            }
 
             new_keys = {
                 (
@@ -152,6 +167,24 @@ def store_player_clips_to_db(
                 )
 
             for c in clist:
+                k = (
+                    str(c["player_uid"]),
+                    str(c["clip_type"]),
+                    int(c["inning"]),
+                    str(c["half_side"]),
+                    int(c["event_index"]),
+                )
+                vid = str(c["video_id"])
+                start_sec = int(c["start_sec"])
+                align_method = str(c["align_method"])
+                conf = str(c["confidence"])
+
+                if preserve_higher_confidence and align_method not in ("manual", "manual_override"):
+                    old = existing_by_key.get(k)
+                    if old is not None and old[0] == vid:
+                        if _CONF_RANK.get(conf, 0) < _CONF_RANK.get(old[3], 0):
+                            vid, start_sec, align_method, conf = old
+
                 conn.execute(
                     """
                     INSERT INTO player_video_clips (
@@ -179,16 +212,16 @@ def store_player_clips_to_db(
                     (
                         mid,
                         c["player_uid"],
-                        c["video_id"],
+                        vid,
                         c["clip_type"],
                         int(c["inning"]),
                         c["half_side"],
                         int(c["event_index"]),
                         c["label_short"],
                         c["event_detail"],
-                        int(c["start_sec"]),
-                        c["align_method"],
-                        c["confidence"],
+                        start_sec,
+                        align_method,
+                        conf,
                     ),
                 )
                 total += 1
@@ -367,7 +400,7 @@ async def run_clips_pipeline(
         # 4. 人工覆寫與入庫
         print("\n>>> [4/5] 套用人工覆寫並寫入 player_video_clips...", flush=True)
         ov_cnt = apply_manual_overrides(clips_by_match)
-        stored_cnt = store_player_clips_to_db(conn, clips_by_match)
+        stored_cnt = store_player_clips_to_db(conn, clips_by_match, preserve_higher_confidence=not force_asr)
         print(f"  - 入庫完成：共 {stored_cnt} 筆 (含人工覆寫 {ov_cnt} 筆)", flush=True)
     finally:
         conn.close()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 import unittest
 from pathlib import Path
@@ -9,12 +10,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.clips_asr import (
+    _extract_opponent_batter_from_fielding,
     _refine_fielding_clips,
     _refine_pitching_clips,
     _solve_batting_dp,
     build_player_matcher,
 )
-from src.clips_scorebug import _partition_halves_across_videos
+from src.clips_pipeline import store_player_clips_to_db
+from src.clips_scorebug import _partition_halves_across_videos, align_game_all_players
 
 
 class TestClipsP1(unittest.TestCase):
@@ -203,6 +206,199 @@ class TestClipsP1(unittest.TestCase):
         self.assertEqual(fld_clips[0]["confidence"], "high")
         self.assertEqual(fld_clips[1]["confidence"], "high")
         self.assertEqual(fld_clips[0]["start_sec"], fld_clips[1]["start_sec"])
+
+    def test_runner_out_with_later_pa_in_bucket_not_pushed_to_half_end(self) -> None:
+        """runner 出局事件若同出局數區間後面仍有打席，不得把終點拉到半局結束 (如 mid=148 #10)。"""
+        samples = [
+            {"t": t, "detected": True, "style": "A", "half": "TOP", "inning": 1, "outs": 0, "bs": "0-0"}
+            for t in range(0, 621, 5)
+        ] + [
+            {"t": t, "detected": True, "style": "A", "half": "BOT", "inning": 1, "outs": 0, "bs": "0-0"}
+            for t in range(621, 900, 5)
+        ]
+        events = [
+            {"event_index": 2, "is_plate_appearance": True, "outs_delta": 1, "text": "廖〇捷飛球接殺"},
+            {"event_index": 3, "is_plate_appearance": True, "outs_delta": 0, "text": "邱〇晨二壘安打"},
+            {"event_index": 4, "is_plate_appearance": True, "outs_delta": 0, "text": "施〇富內野安打"},
+            {"event_index": 5, "is_plate_appearance": True, "outs_delta": 1, "text": "王〇衡飛球接殺"},
+            {"event_index": 6, "is_plate_appearance": True, "outs_delta": 1, "text": "林〇睿野選"},
+            {"event_index": 8, "is_plate_appearance": True, "outs_delta": 0, "text": "陳〇竣一壘安打"},
+            {"event_index": 10, "is_plate_appearance": False, "outs_delta": 1, "text": "壘上跑者陳〇竣在本壘遭到捕手觸殺出局"},
+            {"event_index": 11, "is_plate_appearance": True, "outs_delta": 0, "text": "洪〇均安打"},
+            {"event_index": 12, "is_plate_appearance": True, "outs_delta": 0, "text": "莊〇失誤上壘"},
+            {"event_index": 13, "is_plate_appearance": True, "outs_delta": 1, "text": "柳〇升飛球接殺"},
+        ]
+        game = {
+            "match_id": 148,
+            "youtube_videos": [{"video_id": "v148", "duration_sec": 900}],
+            "half_innings": [
+                {"half_label": "1局上", "half_side": "TOP", "inning": 1, "events": events},
+                {"half_label": "1局下", "half_side": "BOT", "inning": 1, "events": []},
+            ],
+            "players": {
+                "林〇徹_2017-11": {
+                    "masked_name": "林〇徹",
+                    "jersey_number": "99",
+                    "plate_appearances": [],
+                    "pitching_stints": [],
+                    "fielding_plays": [
+                        {
+                            "half_label": "1局上",
+                            "inning": 1,
+                            "half_side": "TOP",
+                            "event_index": 10,
+                            "position": "捕",
+                            "role": "守備處理",
+                            "event_text": "壘上跑者陳〇竣在本壘遭到捕手觸殺出局",
+                        }
+                    ],
+                },
+                "卓〇霆_2018-09": {
+                    "masked_name": "卓〇霆",
+                    "jersey_number": "1",
+                    "plate_appearances": [],
+                    "pitching_stints": [],
+                    "fielding_plays": [
+                        {
+                            "half_label": "1局上",
+                            "inning": 1,
+                            "half_side": "TOP",
+                            "event_index": 12,
+                            "position": "投",
+                            "role": "守備處理",
+                            "event_text": "莊〇擊出球造成投手接球失誤上壘",
+                        }
+                    ],
+                },
+            },
+        }
+        clips = align_game_all_players(game, {"v148": {"video_id": "v148", "duration_sec": 900, "samples": samples}})
+        by_ev = {c["event_index"]: c for c in clips}
+        c10 = by_ev[10]
+        c12 = by_ev[12]
+        # #10 應緊接 #8 (~414s) 附近，不可跳到半局尾端 609s，也不得大於後續 #12
+        self.assertGreaterEqual(c10["start_sec"], 390)
+        self.assertLessEqual(c10["start_sec"], 450)
+        self.assertLess(c10["start_sec"], c12["start_sec"])
+        # 維持原有的 scorebug_anchor_interp / medium，避免把其他正常片段降成 low
+        self.assertEqual(c10["align_method"], "scorebug_anchor_interp")
+        self.assertEqual(c10["confidence"], "medium")
+
+    def test_extract_runner_name_and_tag_out_fielding_refinement(self) -> None:
+        """『壘上跑者...』句型應能萃取跑者姓名，並透過 scorebug_half_interp 全窗精修觸殺片段。"""
+        detail = "壘上跑者陳〇竣在本壘遭到捕手觸殺出局"
+        self.assertEqual(_extract_opponent_batter_from_fielding(detail), "陳〇竣")
+
+        segs = [
+            {"start": 375.0, "end": 378.0, "text": "現在輪到第六棒的陳〇竣"},
+            {"start": 420.0, "end": 424.0, "text": "繞過三壘準備衝回分數"},
+            {"start": 425.0, "end": 429.0, "text": "在本壘前遭到捕手抓到出局"},
+        ]
+        fld_clips = [
+            {
+                "player_uid": "林〇徹_2017-11",
+                "video_id": "vid_r",
+                "half_label": "1局上",
+                "event_index": 10,
+                "label_short": "[捕] 守備處理",
+                "event_detail": detail,
+                "start_sec": 412,
+                "half_start_sec": 0,
+                "half_end_sec": 621,
+                "align_method": "scorebug_half_interp",
+                "confidence": "low",
+            }
+        ]
+        db_segs: list[dict] = []
+        upgraded = _refine_fielding_clips(
+            {("vid_r", "1局上"): fld_clips},
+            {"vid_r": {"segments": segs}},
+            {("vid_r", "1局上"): (0, 650)},
+            {"陳〇竣": {"jersey_number": None, "batting_order": "6"}},
+            [],
+            db_segs,
+        )
+        self.assertEqual(upgraded, 1)
+        self.assertEqual(fld_clips[0]["confidence"], "high")
+        self.assertEqual(fld_clips[0]["align_method"], "dual_track")
+        self.assertGreaterEqual(fld_clips[0]["start_sec"], 417)
+        self.assertLessEqual(fld_clips[0]["start_sec"], 425)
+
+    def test_store_player_clips_preserves_higher_confidence(self) -> None:
+        """preserve_higher_confidence=True 時：僅允許同級或升級異動，不得將 high/medium 降級覆寫。"""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE player_video_clips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id INTEGER NOT NULL,
+                player_uid TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                clip_type TEXT NOT NULL,
+                inning INTEGER NOT NULL,
+                half_side TEXT NOT NULL,
+                event_index INTEGER NOT NULL,
+                label_short TEXT NOT NULL,
+                event_detail TEXT NOT NULL,
+                start_sec INTEGER NOT NULL,
+                align_method TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                UNIQUE(match_id, player_uid, clip_type, inning, half_side, event_index)
+            )
+            """
+        )
+
+        def _clip(eidx: int, start_sec: int, method: str, conf: str) -> dict:
+            return {
+                "match_id": 148,
+                "player_uid": "p_test",
+                "video_id": "v1",
+                "clip_type": "batting",
+                "inning": 1,
+                "half_side": "TOP",
+                "event_index": eidx,
+                "label_short": "一壘安打",
+                "event_detail": "測〇敲出一壘安打",
+                "start_sec": start_sec,
+                "align_method": method,
+                "confidence": conf,
+            }
+
+        # 初始寫入：#1 high, #2 medium, #3 medium
+        store_player_clips_to_db(
+            conn,
+            {
+                148: [
+                    _clip(1, 100, "dual_track", "high"),
+                    _clip(2, 200, "scorebug_anchor_interp", "medium"),
+                    _clip(3, 300, "scorebug_anchor_interp", "medium"),
+                ]
+            },
+            preserve_higher_confidence=True,
+        )
+
+        # 重算寫入：#1 欲降級 medium（應保留 100/high），#2 同級 medium（應更新 220/medium），#3 升級 high（應更新 310/high）
+        store_player_clips_to_db(
+            conn,
+            {
+                148: [
+                    _clip(1, 150, "scorebug_anchor_interp", "medium"),
+                    _clip(2, 220, "scorebug_anchor_interp", "medium"),
+                    _clip(3, 310, "dual_track", "high"),
+                ]
+            },
+            preserve_higher_confidence=True,
+        )
+
+        rows = {
+            r[0]: (r[1], r[2], r[3])
+            for r in conn.execute(
+                "SELECT event_index, start_sec, align_method, confidence FROM player_video_clips WHERE match_id=148"
+            ).fetchall()
+        }
+        self.assertEqual(rows[1], (100, "dual_track", "high"))
+        self.assertEqual(rows[2], (220, "scorebug_anchor_interp", "medium"))
+        self.assertEqual(rows[3], (310, "dual_track", "high"))
 
 
 if __name__ == "__main__":
