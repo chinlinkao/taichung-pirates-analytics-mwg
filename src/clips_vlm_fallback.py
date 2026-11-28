@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -491,27 +493,38 @@ def call_vlm_on_sheets(
 
     last_exc: Optional[Exception] = None
     for cand in candidates:
-        try:
-            resp = client.models.generate_content(
-                model=cand,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                ),
-            )
-            txt = getattr(resp, "text", None) or ""
-            if txt.strip():
-                if cand != model_name:
-                    print(f"    -> [VLM] 模型 {model_name} 不可用，已自動切換為 {cand}", flush=True)
-                return txt, cand
-        except Exception as exc:
-            last_exc = exc
-            msg = str(exc).lower()
-            is_model_missing = any(tok in msg for tok in ("404", "not_found", "not found", "unsupported", "invalid argument"))
-            if is_model_missing:
-                continue
-            raise
+        for attempt in range(3):
+            try:
+                resp = client.models.generate_content(
+                    model=cand,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1,
+                    ),
+                )
+                txt = getattr(resp, "text", None) or ""
+                if txt.strip():
+                    if cand != model_name:
+                        print(f"    -> [VLM] 模型 {model_name} 不可用，已自動切換為 {cand}", flush=True)
+                    return txt, cand
+                break
+            except Exception as exc:
+                last_exc = exc
+                msg = str(exc).lower()
+                is_model_missing = any(tok in msg for tok in ("404", "not_found", "not found", "unsupported", "invalid argument"))
+                if is_model_missing:
+                    break
+                is_transient = any(tok in msg for tok in ("429", "resource_exhausted", "503", "unavailable", "rate limit"))
+                if is_transient:
+                    if attempt < 2:
+                        wait_s = 15 * (attempt + 1)
+                        print(f"    -> [VLM] 遭遇暫時性限流/高負載 ({cand})，{wait_s} 秒後重試 ({attempt + 1}/2)...", flush=True)
+                        time.sleep(wait_s)
+                        continue
+                    print(f"    -> [VLM] {cand} 持續暫時不可用，改試下一備援模型...", flush=True)
+                    break
+                raise
 
     raise RuntimeError(f"所有候選 VLM 模型皆呼叫失敗 ({candidates}): {last_exc}")
 
@@ -612,7 +625,7 @@ def _download_blind_section(
     win_end: int,
     tmp_dir: Path = TMP_MEDIA_DIR,
 ) -> Path:
-    """取得涵蓋盲區之本地影片檔：優先復用現有快取，否則以 yt-dlp 僅下載目標時間區段。"""
+    """取得涵蓋盲區之本地影片檔：優先多線程下載整支 360p 暫存檔共用，失敗再退回區段下載。"""
     tmp_dir.mkdir(parents=True, exist_ok=True)
     full_tmp = tmp_dir / f"{video_id}.mp4"
     if full_tmp.exists() and full_tmp.stat().st_size > 100_000:
@@ -628,13 +641,39 @@ def _download_blind_section(
         return sec_path
 
     url = f"https://www.youtube.com/watch?v={video_id}"
-    section_arg = f"*{_fmt_mmss(win_start)}-{_fmt_mmss(win_end)}"
-    cmd = [
+    fmt = (
+        "bestvideo[height<=360][vcodec^=avc1][ext=mp4]/best[height<=360][ext=mp4]/"
+        "bestvideo[height<=360][ext=mp4]/bestvideo[height<=480][ext=mp4]/best[height<=480]"
+    )
+
+    # 優先使用 --concurrent-fragments 8 多線程整檔下載 360p（通常 15~30s 即可完成，且同片多盲區共用）
+    full_cmd = [
         sys.executable,
         "-m",
         "yt_dlp",
         "-f",
-        "bestvideo[height<=360][ext=mp4]/best[height<=360][ext=mp4]/bestvideo[height<=480][ext=mp4]/best[height<=480]",
+        fmt,
+        "--concurrent-fragments",
+        "8",
+        "--no-part",
+        "--quiet",
+        "-o",
+        str(full_tmp),
+        url,
+    ]
+    res_full = subprocess.run(full_cmd, capture_output=True, text=True)
+    if res_full.returncode == 0 and full_tmp.exists() and full_tmp.stat().st_size > 100_000:
+        return full_tmp
+    full_tmp.unlink(missing_ok=True)
+
+    # 備援：退回 --download-sections 單段下載
+    section_arg = f"*{_fmt_mmss(win_start)}-{_fmt_mmss(win_end)}"
+    sec_cmd = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "-f",
+        fmt,
         "--download-sections",
         section_arg,
         "--force-keyframes-at-cuts",
@@ -644,7 +683,7 @@ def _download_blind_section(
         str(sec_path),
         url,
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(sec_cmd, check=True)
     return sec_path
 
 
@@ -777,7 +816,7 @@ def refine_clips_with_vlm_fallback(
 
     stats = {"blind_windows": 0, "vlm_calls": 0, "cache_hits": 0, "clips_upgraded": 0}
 
-    for g in games:
+    for idx_g, g in enumerate(games):
         mid = int(g["match_id"])
         m_clips = clips_by_match.get(mid, [])
         if not m_clips:
@@ -787,9 +826,16 @@ def refine_clips_with_vlm_fallback(
         if not windows:
             continue
         stats["blind_windows"] += len(windows)
+        future_vids = {
+            str(v["video_id"])
+            for fg in games[idx_g + 1 :]
+            for v in fg.get("youtube_videos", [])
+        }
+        processed_vids_in_game: set[str] = set()
 
         for w_idx, win in enumerate(windows):
             vid = str(win["video_id"])
+            processed_vids_in_game.add(vid)
             win_key = f"{win['win_start']}_{win['win_end']}_{PROMPT_VERSION}"
             cache_path = cache_dir / f"{vid}.json"
             cached_doc: dict[str, Any] = {}
@@ -907,5 +953,14 @@ def refine_clips_with_vlm_fallback(
                     m_clips, vid=vid, vlm_result=vlm_result, use_opencv_refine=use_opencv_refine
                 )
                 stats["clips_upgraded"] += up
+
+        # 本場次處理完畢後，立即清理不再被後續場次使用的影片與九宮格暫存
+        for vid_done in processed_vids_in_game:
+            if vid_done not in future_vids:
+                (tmp_dir / f"{vid_done}.mp4").unlink(missing_ok=True)
+                for sec_f in tmp_dir.glob(f"{vid_done}_sec_*.mp4"):
+                    sec_f.unlink(missing_ok=True)
+            for s_dir in tmp_dir.glob(f"vlm_sheets_{vid_done}_*"):
+                shutil.rmtree(s_dir, ignore_errors=True)
 
     return stats
