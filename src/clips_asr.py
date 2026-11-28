@@ -83,6 +83,148 @@ _POS_BROADCAST_KEYWORDS: dict[str, tuple[str, ...]] = {
 _NON_DEFENSE_BASE_RE = re.compile(
     r"(?:[一二三]壘安打|[一二三]壘有人|上[一二三]壘|[一二三]壘跑者|盜上[二三]壘|攻佔[一二三]壘|滿壘)"
 )
+_CN_INNING_MAP = {
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+}
+_HALF_CUE_RE = re.compile(r"(?:第)?([一二三四五六七1-7])\s*局\s*(?:的)?\s*([上下])(?:半)?")
+_HALF_END_CUES = (
+    "結束",
+    "三人出局",
+    "三個出局",
+    "三出局",
+    "殘壘",
+    "攻勢結束",
+    "進攻結束",
+    "無功而返",
+)
+_HALF_START_CUES = (
+    "來到",
+    "進入",
+    "開始",
+    "回到",
+    "輪到",
+    "進攻",
+    "先攻",
+    "首先",
+    "首位",
+    "首名",
+    "第一棒",
+)
+_HALF_NON_TRANSITION_BEFORE = (
+    "同一",
+    "前一場",
+    "上一場",
+    "前場",
+    "前一個",
+    "前在",
+    "剛剛",
+    "剛才",
+    "剛在",
+    "稍早",
+    "上次",
+    "待會",
+    "等一下",
+    "先前",
+    "前面",
+    "上個",
+)
+_LINEUP_ORDER_RE = re.compile(r"(?:第?\s*([一二三四五六七八九壹貳參肆伍陸柒捌玖1-9])\s*棒|(開路先鋒|首棒))")
+_LINEUP_ORDER_MAP = {
+    "一": 1,
+    "壹": 1,
+    "1": 1,
+    "二": 2,
+    "貳": 2,
+    "2": 2,
+    "三": 3,
+    "參": 3,
+    "3": 3,
+    "四": 4,
+    "肆": 4,
+    "4": 4,
+    "五": 5,
+    "伍": 5,
+    "5": 5,
+    "六": 6,
+    "陸": 6,
+    "6": 6,
+    "七": 7,
+    "柒": 7,
+    "7": 7,
+    "八": 8,
+    "捌": 8,
+    "8": 8,
+    "九": 9,
+    "玖": 9,
+    "9": 9,
+}
+_DEFENSE_INTRO_POS_RE = re.compile(r"(?:先發投手|捕手|一壘手?|二壘手?|三壘手?|游擊手?|左外野|中外野|右外野)")
+_PROMPT_VOCAB_TOKENS = (
+    "一局上",
+    "一局下",
+    "二局上",
+    "二局下",
+    "三局上",
+    "三局下",
+    "三振",
+    "四壞",
+    "保送",
+    "安打",
+    "游擊手",
+    "三壘手",
+    "四壘手",
+    "四壽手",
+    "接殺",
+    "刺殺",
+    "換投",
+)
+_REAL_ACTION_VERBS = (
+    "來到",
+    "進入",
+    "結束",
+    "打到",
+    "擊出",
+    "揮棒",
+    "遭到",
+    "獲得",
+    "輪到",
+    "現在",
+)
+
+
+def _is_prompt_hallucination(text: str) -> bool:
+    """偵測並過濾 Whisper 靜音段重複 initial_prompt 的詞表幻覺雜訊。"""
+    if not text:
+        return True
+    if any(k in text for k in ("常見詞彙", "常見背號", "台灣少棒社區棒球轉播")):
+        return True
+    has_action = any(v in text for v in _REAL_ACTION_VERBS)
+    if not has_action:
+        if "四壘安打" in text or "四壘手" in text:
+            return True
+        if len(re.findall(r"(?:^|[、，,：:\s])\d{1,2}(?=[、，,：:\s號。]|$)", text)) >= 5:
+            return True
+        if len(_HALF_CUE_RE.findall(text)) >= 2:
+            return True
+    parts = [p.strip() for p in re.split(r"[、，,：:]+", text) if p.strip()]
+    if len(parts) >= 3:
+        vocab_hits = sum(1 for p in parts if any(tok in p for tok in _PROMPT_VOCAB_TOKENS))
+        if vocab_hits >= 3 and not has_action:
+            return True
+    return False
 
 
 def _normalize_pinyin_token(py: str) -> str:
@@ -368,7 +510,20 @@ def _find_pa_result_matches(text: str, label_short: str, event_detail: str) -> O
                 return {"reason": "result_fly", "score": 60}
         return None
     if "刺殺" in detail or "滾地" in lbl or "野手選擇" in lbl:
-        if any(kw in text for kw in ("傳一壘", "傳向一壘", "刺殺", "封殺", "滾地球")):
+        if any(
+            kw in text
+            for kw in (
+                "傳一壘",
+                "傳向一壘",
+                "往一壘傳",
+                "傳給一壘",
+                "傳向伊雷",
+                "刺殺",
+                "封殺",
+                "滾地球",
+                "攔住",
+            )
+        ):
             if pos_codes and any(_has_defensive_position_mention(text, p) for p in pos_codes):
                 return {"reason": "result_gb_pos", "score": 63}
         return None
@@ -377,6 +532,453 @@ def _find_pa_result_matches(text: str, label_short: str, event_detail: str) -> O
             return {"reason": "result_err", "score": 62}
         return None
     return None
+
+
+def _extract_half_cues_from_segments(
+    transcript_segments: list[dict[str, Any]],
+    expected_set: set[tuple[str, int]],
+) -> list[dict[str, Any]]:
+    """從過濾幻覺後的語音段落萃取半局 START / END / MENTION 候選錨點。"""
+    cues: list[dict[str, Any]] = []
+    for seg in transcript_segments:
+        txt = str(seg.get("text") or "").strip()
+        if not txt or _is_prompt_hallucination(txt):
+            continue
+        t_sec = int(round(float(seg.get("start", 0.0))))
+        for m in _HALF_CUE_RE.finditer(txt):
+            inn = _CN_INNING_MAP.get(m.group(1))
+            if inn is None:
+                continue
+            side = "TOP" if m.group(2) == "上" else "BOT"
+            if (side, inn) not in expected_set:
+                continue
+
+            before_ctx = txt[max(0, m.start() - 5) : m.start()]
+            if any(bad in before_ctx for bad in _HALF_NON_TRANSITION_BEFORE):
+                continue
+            after_ctx = txt[m.end() : m.end() + 2]
+            after_char = after_ctx[:1]
+            if after_char == "來" and "半" not in m.group(0):
+                continue
+            if after_ctx.startswith(("保者", "跑者")):
+                continue
+
+            is_end = any(k in txt for k in _HALF_END_CUES)
+            is_start = any(k in txt for k in _HALF_START_CUES)
+            if is_end:
+                kind = "END"
+                score = 105.0
+                t_val = int(round(float(seg.get("end", t_sec))))
+            elif is_start:
+                kind = "START"
+                score = 100.0
+                t_val = t_sec
+            else:
+                kind = "MENTION"
+                score = 65.0
+                t_val = t_sec
+
+            cues.append(
+                {
+                    "half_side": side,
+                    "inning": inn,
+                    "kind": kind,
+                    "t": max(0, t_val),
+                    "score": score,
+                }
+            )
+    return cues
+
+
+def detect_transcript_halves(
+    transcript_segments: list[dict[str, Any]],
+    expected_halves: list[tuple[str, int]],
+) -> set[int]:
+    """統計逐字稿中出現之合法半局索引鍵 (inning * 2 + 0/1)，供無 Scorebug 多段影片切分使用。"""
+    expected_set = set(expected_halves)
+    cues = _extract_half_cues_from_segments(transcript_segments, expected_set)
+    return {c["inning"] * 2 + (0 if c["half_side"] == "TOP" else 1) for c in cues}
+
+
+def _detect_lineup_intro_span_sec(
+    transcript_segments: list[dict[str, Any]],
+    lineup_matchers: Optional[list[dict[str, Any]]],
+    duration_sec: int,
+) -> Optional[tuple[int, int]]:
+    """嚴格偵測賽前海盜先發打序連續唱名群集 (起點, 終點)，排除比賽中一般打席誤判。"""
+    if not lineup_matchers or len(lineup_matchers) < 3:
+        return None
+    limit_sec = min(float(duration_sec) * 0.48, 3000.0) if duration_sec > 0 else 2400.0
+    events: list[tuple[float, float, set[int], set[str], bool]] = []
+    for seg in transcript_segments:
+        st = float(seg.get("start", 0.0))
+        if st > limit_sec:
+            break
+        txt = str(seg.get("text") or "").strip()
+        if not txt or _is_prompt_hallucination(txt):
+            continue
+        ords: set[int] = set()
+        for m in _LINEUP_ORDER_RE.finditer(txt):
+            ords.add(_LINEUP_ORDER_MAP[m.group(1)] if m.group(1) else 1)
+        uids: set[str] = set()
+        for pm in lineup_matchers:
+            cands = _find_player_matches_in_text(txt, pm)
+            if cands and cands[0]["reason"] in ("name_pinyin", "jersey", "name_fuzzy") and cands[0]["score"] >= 85:
+                uids.add(str(pm["player_uid"]))
+        has_def = bool(_DEFENSE_INTRO_POS_RE.search(txt))
+        if ords or uids or has_def:
+            events.append((st, float(seg.get("end", st)), ords, uids, has_def))
+
+    for i, (t0, _, o0, _, _) in enumerate(events):
+        if not o0:
+            continue
+        ords_win: set[int] = set()
+        uids_win: set[str] = set()
+        max_end = t0
+        for j in range(i, len(events)):
+            if events[j][0] - t0 > 35.0:
+                break
+            if events[j][2]:
+                ords_win |= events[j][2]
+                max_end = max(max_end, events[j][1])
+            uids_win |= events[j][3]
+        if len(ords_win) >= 4 and len(ords_win & {1, 2, 3, 4}) >= 2 and len(uids_win) >= 2:
+            ext_end = max_end
+            for j in range(i, len(events)):
+                if events[j][0] >= max_end and events[j][0] <= ext_end + 12.0 and (events[j][4] or events[j][2]):
+                    ext_end = max(ext_end, events[j][1])
+            return int(round(t0)), int(round(ext_end))
+    return None
+
+
+def _detect_lineup_intro_end_sec(
+    transcript_segments: list[dict[str, Any]],
+    lineup_matchers: Optional[list[dict[str, Any]]],
+    duration_sec: int,
+) -> Optional[int]:
+    """偵測賽前海盜先發打序連續唱名群集結束秒數，作為 1 局上開賽下界。"""
+    span = _detect_lineup_intro_span_sec(transcript_segments, lineup_matchers, duration_sec)
+    return span[1] if span is not None else None
+
+
+def infer_half_segments_from_transcript(
+    transcript_segments: list[dict[str, Any]],
+    expected_halves: list[tuple[str, int]],
+    duration_sec: int,
+    pa_counts_by_label: Optional[dict[str, int]] = None,
+    lineup_matchers: Optional[list[dict[str, Any]]] = None,
+) -> Optional[list[dict[str, Any]]]:
+    """當 Scorebug 無法辨識時，從語音逐字稿重建單調遞增且無重疊的半局時間軸。"""
+    if not expected_halves:
+        return None
+    valid_segs = [
+        s
+        for s in transcript_segments
+        if str(s.get("text") or "").strip() and not _is_prompt_hallucination(str(s.get("text") or ""))
+    ]
+    if len(valid_segs) < 20:
+        return None
+
+    if duration_sec <= 0:
+        duration_sec = int(round(max(float(s.get("end", 0.0)) for s in valid_segs)))
+
+    expected_set = set(expected_halves)
+    raw_cues = _extract_half_cues_from_segments(valid_segs, expected_set)
+    if expected_halves[0] == ("TOP", 1) and duration_sec >= 2400:
+        half_idx_map = {h: idx for idx, h in enumerate(expected_halves)}
+        raw_cues = [
+            c
+            for c in raw_cues
+            if not (
+                half_idx_map.get((c["half_side"], c["inning"]), 0) >= 2
+                and c["t"] < half_idx_map[(c["half_side"], c["inning"])] * 140
+            )
+        ]
+    if not raw_cues:
+        return None
+
+    intro_span = _detect_lineup_intro_span_sec(valid_segs, lineup_matchers, duration_sec)
+    lineup_intro_end: Optional[int] = None
+    if intro_span is not None:
+        intro_start, intro_end = intro_span
+        has_earlier_inn1 = any(c["inning"] == 1 and c["t"] < intro_start - 15 for c in raw_cues)
+        if not has_earlier_inn1:
+            lineup_intro_end = intro_end
+    pa_counts = pa_counts_by_label or {}
+
+    # 依半局分組並去重 (15 秒內同類保留最高分)
+    cues_by_half: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for c in raw_cues:
+        if lineup_intro_end is not None and c["t"] < lineup_intro_end - 10:
+            c = {**c, "score": c["score"] - 60.0}
+        key = (c["half_side"], c["inning"])
+        cues_by_half.setdefault(key, []).append(c)
+
+    options_per_half: list[list[dict[str, Any]]] = []
+    for side, inn in expected_halves:
+        raw_list = sorted(cues_by_half.get((side, inn), []), key=lambda x: (-x["score"], x["t"]))
+        deduped: list[dict[str, Any]] = []
+        for rc in raw_list:
+            if any(kept["kind"] == rc["kind"] and abs(kept["t"] - rc["t"]) <= 15 for kept in deduped):
+                continue
+            deduped.append(rc)
+
+        starts = [c for c in deduped if c["kind"] == "START"]
+        ends = [c for c in deduped if c["kind"] == "END"]
+        mentions = [c for c in deduped if c["kind"] == "MENTION"]
+
+        opts: list[dict[str, Any]] = []
+        for sc in starts:
+            for ec in ends:
+                if 60 <= (ec["t"] - sc["t"]) <= 1800:
+                    opts.append(
+                        {
+                            "kind": "START_END",
+                            "t_start": sc["t"],
+                            "t_end": ec["t"],
+                            "start_ref": sc["t"],
+                            "end_ref": ec["t"],
+                            "score": sc["score"] + ec["score"] + 40.0,
+                        }
+                    )
+        for sc in starts:
+            opts.append(
+                {
+                    "kind": "START",
+                    "t_start": sc["t"],
+                    "t_end": None,
+                    "start_ref": sc["t"],
+                    "end_ref": sc["t"] + 60,
+                    "score": sc["score"],
+                }
+            )
+        for ec in ends:
+            opts.append(
+                {
+                    "kind": "END",
+                    "t_start": None,
+                    "t_end": ec["t"],
+                    "start_ref": max(0, ec["t"] - 120),
+                    "end_ref": ec["t"],
+                    "score": ec["score"],
+                }
+            )
+        for mc in mentions:
+            opts.append(
+                {
+                    "kind": "MENTION",
+                    "t_start": None,
+                    "t_end": None,
+                    "t_mid": mc["t"],
+                    "start_ref": mc["t"],
+                    "end_ref": mc["t"],
+                    "score": mc["score"],
+                }
+            )
+        opts.sort(key=lambda o: (-o["score"], o["start_ref"]))
+        options_per_half.append(opts[:12])
+
+    h_cnt = len(expected_halves)
+    dp: list[list[float]] = []
+    prev_ptr: list[list[Optional[tuple[int, int]]]] = []
+    for h_idx in range(h_cnt):
+        dp.append([opt["score"] for opt in options_per_half[h_idx]])
+        prev_ptr.append([None] * len(options_per_half[h_idx]))
+
+    for h_idx in range(h_cnt):
+        for k, opt in enumerate(options_per_half[h_idx]):
+            for p_idx in range(h_idx):
+                gap = h_idx - p_idx
+                for pk, prev_opt in enumerate(options_per_half[p_idx]):
+                    if opt["start_ref"] < prev_opt["end_ref"] + 40 * gap:
+                        continue
+                    if (opt["end_ref"] - prev_opt["start_ref"]) > 2100 * (gap + 1):
+                        continue
+                    avg_dur = (opt["start_ref"] - prev_opt["start_ref"]) / gap
+                    dur_bonus = 15.0 if 180.0 <= avg_dur <= 1100.0 else 0.0
+                    cand_tot = dp[p_idx][pk] + opt["score"] + dur_bonus
+                    if cand_tot > dp[h_idx][k]:
+                        dp[h_idx][k] = cand_tot
+                        prev_ptr[h_idx][k] = (p_idx, pk)
+
+    best_end: Optional[tuple[int, int]] = None
+    best_total = -1e9
+    for h_idx in range(h_cnt):
+        for k in range(len(options_per_half[h_idx])):
+            if dp[h_idx][k] > best_total:
+                best_total = dp[h_idx][k]
+                best_end = (h_idx, k)
+
+    if best_end is None:
+        return None
+
+    selected: dict[int, dict[str, Any]] = {}
+    cur: Optional[tuple[int, int]] = best_end
+    while cur is not None:
+        hi, ki = cur
+        selected[hi] = options_per_half[hi][ki]
+        cur = prev_ptr[hi][ki]
+
+    if not selected:
+        return None
+
+    def _half_label(h_idx: int) -> str:
+        sd, inn = expected_halves[h_idx]
+        return f"{inn}局{'上' if sd == 'TOP' else '下'}"
+
+    def _pa_weight(h_idx: int) -> int:
+        return max(3, int(pa_counts.get(_half_label(h_idx), 4)))
+
+    fixed_start: list[Optional[int]] = [None] * h_cnt
+    fixed_end: list[Optional[int]] = [None] * h_cnt
+
+    for h_idx, opt in selected.items():
+        if opt.get("t_start") is not None:
+            fixed_start[h_idx] = int(opt["t_start"])
+        if opt.get("t_end") is not None:
+            fixed_end[h_idx] = int(opt["t_end"])
+
+    # 補齊相鄰已知邊界
+    for h_idx in range(h_cnt):
+        if fixed_end[h_idx] is not None and fixed_start[h_idx] is None:
+            if h_idx == 0:
+                if lineup_intro_end is not None and lineup_intro_end < fixed_end[0] - 60:
+                    fixed_start[0] = lineup_intro_end
+                elif fixed_end[0] > 1200:
+                    est_dur = max(600, min(900, _pa_weight(0) * 85))
+                    fixed_start[0] = max(60, fixed_end[0] - est_dur)
+                else:
+                    fixed_start[0] = min(60, max(0, fixed_end[0] - 60))
+            elif fixed_end[h_idx - 1] is not None and fixed_end[h_idx - 1] + 25 < fixed_end[h_idx] - 40:
+                fixed_start[h_idx] = fixed_end[h_idx - 1] + 25
+
+        if fixed_start[h_idx] is not None and fixed_end[h_idx] is None:
+            if (
+                h_idx + 1 < h_cnt
+                and fixed_start[h_idx + 1] is not None
+                and fixed_start[h_idx + 1] - 25 > fixed_start[h_idx] + 40
+            ):
+                fixed_end[h_idx] = fixed_start[h_idx + 1] - 25
+
+    # 紀錄僅有 MENTION 的內部時間點（不切斷連續邊界，僅確保分割後涵蓋該點）
+    mention_mids: dict[int, int] = {}
+    for h_idx, opt in selected.items():
+        if opt["kind"] == "MENTION" and fixed_start[h_idx] is None and fixed_end[h_idx] is None:
+            mention_mids[h_idx] = int(opt["t_mid"])
+
+    # 組裝完整 half_segments，對未定起訖的區段依 PA 權重連續切分（無空白斷層）
+    segs_out: list[dict[str, Any]] = [{} for _ in range(h_cnt)]
+    idx = 0
+    while idx < h_cnt:
+        if fixed_start[idx] is not None and fixed_end[idx] is not None:
+            s_val = int(fixed_start[idx])
+            e_val = max(s_val + 30, int(fixed_end[idx]))
+            sd, inn = expected_halves[idx]
+            segs_out[idx] = {
+                "half_key": inn * 2 + (0 if sd == "TOP" else 1),
+                "half_label": _half_label(idx),
+                "inning": inn,
+                "half_side": sd,
+                "start_sec": s_val,
+                "end_sec": min(duration_sec, e_val),
+                "sample_count": 0,
+                "is_interpolated": False,
+                "source": "asr_anchor",
+            }
+            idx += 1
+            continue
+
+        # 若 idx 自身已有 fixed_end 且無 fixed_start，只處理到 idx 為止；否則往後找到第一個 fixed_start（止於其前）或 fixed_end（止於其後）
+        if fixed_end[idx] is not None:
+            j = idx + 1
+        else:
+            j = idx + 1
+            while j < h_cnt:
+                if fixed_start[j] is not None:
+                    break
+                if fixed_end[j] is not None:
+                    j += 1
+                    break
+                j += 1
+
+        if fixed_start[idx] is not None:
+            t_lo = int(fixed_start[idx])
+        elif idx > 0:
+            t_lo = int(segs_out[idx - 1]["end_sec"]) + 20
+        else:
+            if j <= h_cnt and (j - 1) >= idx and fixed_end[j - 1] is not None:
+                t_hi_peek = int(fixed_end[j - 1])
+            elif j < h_cnt and fixed_start[j] is not None:
+                t_hi_peek = int(fixed_start[j]) - 20
+            else:
+                t_hi_peek = duration_sec - 30
+            if lineup_intro_end is not None and lineup_intro_end < t_hi_peek - 40 * (j - idx):
+                t_lo = lineup_intro_end
+            elif (j - idx) == 1 and t_hi_peek > 1200:
+                est_dur = max(600, min(900, _pa_weight(0) * 85))
+                if idx in mention_mids:
+                    t_lo = max(60, min(mention_mids[idx] - 120, t_hi_peek - est_dur))
+                else:
+                    t_lo = max(60, t_hi_peek - est_dur)
+            else:
+                t_lo = min(60, max(0, t_hi_peek - 40 * (j - idx)))
+
+        if j - 1 >= idx and fixed_end[j - 1] is not None:
+            t_hi = int(fixed_end[j - 1])
+        elif j < h_cnt and fixed_start[j] is not None:
+            t_hi = int(fixed_start[j]) - 20
+        else:
+            t_hi = max(t_lo + 45 * (j - idx), duration_sec - 30)
+
+        t_hi = max(t_lo + 40 * (j - idx), min(duration_sec, t_hi))
+        has_both_bounds = (idx > 0 or fixed_start[idx] is not None or lineup_intro_end is not None) and (
+            j < h_cnt or fixed_end[j - 1] is not None
+        )
+
+        sub_weights = [_pa_weight(k) for k in range(idx, j)]
+        cur_t = t_lo
+        for offset, k in enumerate(range(idx, j)):
+            if k > idx and fixed_start[k] is not None and int(fixed_start[k]) > cur_t + 30:
+                cur_t = int(fixed_start[k])
+            if k == j - 1:
+                seg_e = t_hi
+            elif fixed_end[k] is not None and int(fixed_end[k]) > cur_t + 30:
+                seg_e = min(t_hi, int(fixed_end[k]))
+            elif k + 1 < j and fixed_start[k + 1] is not None and int(fixed_start[k + 1]) - 20 > cur_t + 30:
+                seg_e = int(fixed_start[k + 1]) - 20
+            else:
+                rem_w = max(1, sum(sub_weights[offset:]))
+                seg_len = int(round((t_hi - cur_t) * (sub_weights[offset] / rem_w)))
+                seg_e = cur_t + seg_len
+                if k in mention_mids:
+                    seg_e = max(seg_e, mention_mids[k] + 15)
+                if (k + 1) in mention_mids and fixed_start[k + 1] is None:
+                    seg_e = min(seg_e, mention_mids[k + 1] - 15)
+                seg_e = min(t_hi - 35 * (j - 1 - k), max(cur_t + 35, seg_e))
+
+            sd, inn = expected_halves[k]
+            is_anchored = (k in selected) or has_both_bounds
+            segs_out[k] = {
+                "half_key": inn * 2 + (0 if sd == "TOP" else 1),
+                "half_label": _half_label(k),
+                "inning": inn,
+                "half_side": sd,
+                "start_sec": cur_t,
+                "end_sec": max(cur_t + 30, seg_e),
+                "sample_count": 0,
+                "is_interpolated": not is_anchored,
+                "source": "asr_anchor",
+            }
+            cur_t = segs_out[k]["end_sec"] + 15
+        idx = j
+
+    for h_idx in range(1, h_cnt):
+        if segs_out[h_idx]["start_sec"] < segs_out[h_idx - 1]["end_sec"]:
+            segs_out[h_idx]["start_sec"] = segs_out[h_idx - 1]["end_sec"]
+        if segs_out[h_idx]["end_sec"] <= segs_out[h_idx]["start_sec"] + 20:
+            segs_out[h_idx]["end_sec"] = min(duration_sec, segs_out[h_idx]["start_sec"] + 30)
+
+    return segs_out
 
 
 def _match_text_to_player(text: str, matcher: dict[str, Any]) -> Optional[str]:
@@ -884,11 +1486,13 @@ def _solve_batting_dp(
 
         matcher = matchers_by_uid.get(c["player_uid"])
         raw_cands: list[dict[str, Any]] = []
-        is_interp_clip = c["align_method"] == "bracket_interp"
+        is_interp_clip = c["align_method"] in ("bracket_interp", "asr_half_interp")
         orig_t = float(c["start_sec"])
         rem_after = n_pa - 1 - idx_c
 
         for s in win_segs:
+            if _is_prompt_hallucination(str(s.get("text") or "")):
+                continue
             s_start = float(s["start"])
             if matcher:
                 for m in _find_player_matches_in_text(s["text"], matcher):
@@ -1079,7 +1683,7 @@ def _refine_pitching_clips(
                 min_pitch_sec = max(min_pitch_sec, float(pc["start_sec"]) + 8.0)
                 continue
             matcher = matchers_by_uid.get(pc["player_uid"])
-            is_interp = pc["align_method"] == "bracket_interp"
+            is_interp = pc["align_method"] in ("bracket_interp", "asr_half_interp", "asr_half_start")
             cur_est = float(pc["start_sec"])
             s_lo, s_hi = min_pitch_sec, float(eff_end + 10)
 
@@ -1089,6 +1693,8 @@ def _refine_pitching_clips(
                 if float(s["end"]) < s_lo or st > s_hi:
                     continue
                 txt = s["text"]
+                if _is_prompt_hallucination(txt):
+                    continue
                 has_pitch_cue = any(kw in txt for kw in _PITCH_CHANGE_CUES)
                 has_explicit_change = any(kw in txt for kw in _EXPLICIT_PITCH_CHANGE_CUES)
 
@@ -1205,7 +1811,7 @@ def _refine_fielding_clips(
 
             rep = non_high_clips[0]
             cur_est = float(rep["start_sec"])
-            is_interp = rep["align_method"] == "bracket_interp"
+            is_interp = rep["align_method"] in ("bracket_interp", "asr_half_interp")
             rem_after = n_ev - 1 - idx_e
             if is_interp:
                 search_lo = max(float(eff_start), cur_est - 120.0) if (h_end - h_start) > 180 else float(eff_start)
@@ -1234,6 +1840,8 @@ def _refine_fielding_clips(
                     st = float(s["start"])
                     if st < search_lo or st > search_hi:
                         continue
+                    if _is_prompt_hallucination(str(s.get("text") or "")):
+                        continue
                     for ms in _find_player_matches_in_text(s["text"], opp_m):
                         ex_sec = _resolve_match_timestamp(s, ms["char_pos"])
                         est_s = max(0.0, ex_sec - 3.0)
@@ -1259,6 +1867,8 @@ def _refine_fielding_clips(
                 for idx_s, s in enumerate(win_segs):
                     st = float(s["start"])
                     if st < search_lo or st > search_hi:
+                        continue
+                    if _is_prompt_hallucination(str(s.get("text") or "")):
                         continue
                     if not any(_has_defensive_position_mention(s["text"], p) for p in pos_codes):
                         continue

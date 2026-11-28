@@ -13,14 +13,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 import shutil
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.clips_asr import refine_clips_with_asr
+from src.clips_asr import (
+    DEFAULT_TRANSCRIPT_DIR,
+    _get_whisper_model,
+    _merge_windows,
+    _transcribe_audio_windows,
+    _window_covered,
+    download_temp_audio,
+    refine_clips_with_asr,
+)
 from src.clips_scorebug import (
     TMP_MEDIA_DIR,
     align_game_all_players,
@@ -185,6 +195,94 @@ def store_player_clips_to_db(
     return total
 
 
+def _load_or_prepare_zero_scorebug_transcripts(
+    games: list[dict[str, Any]],
+    raw_scans: dict[str, dict[str, Any]],
+    asr_mode: str,
+    model_size: str,
+    align_only: bool,
+    transcript_dir: Path = DEFAULT_TRANSCRIPT_DIR,
+    tmp_dir: Path = TMP_MEDIA_DIR,
+) -> dict[str, dict[str, Any]]:
+    """預載既有語音逐字稿，並在非 align-only 模式下為零偵測 Scorebug 影片補齊全片逐字稿。"""
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    games_by_vid: dict[str, list[dict[str, Any]]] = {}
+    duration_by_vid: dict[str, int] = {}
+    for g in games:
+        for v in g.get("youtube_videos", []):
+            vid = str(v["video_id"])
+            games_by_vid.setdefault(vid, []).append(g)
+            if v.get("duration_sec"):
+                duration_by_vid[vid] = int(v["duration_sec"])
+
+    transcripts_by_vid: dict[str, dict[str, Any]] = {}
+    model: Any = None
+
+    for vid, v_games in sorted(games_by_vid.items()):
+        t_cache = transcript_dir / f"{vid}.json"
+        if t_cache.exists():
+            cached = json.loads(t_cache.read_text(encoding="utf-8"))
+        else:
+            cached = {"video_id": vid, "windows": [], "segments": []}
+
+        scan = raw_scans.get(vid, {})
+        samples = scan.get("samples", [])
+        det_cnt = sum(1 for s in samples if s.get("detected"))
+        dur_sec = int(scan.get("duration_sec") or duration_by_vid.get(vid) or 0)
+
+        need_full_asr = (
+            not align_only
+            and asr_mode != "off"
+            and det_cnt == 0
+            and dur_sec > 300
+            and not _window_covered((65, dur_sec - 30), [tuple(x) for x in cached.get("windows", [])])
+        )
+        if need_full_asr:
+            if model is None:
+                model = _get_whisper_model(model_size)
+            teams_set: set[str] = set()
+            jerseys_set: set[str] = set()
+            for g in v_games:
+                teams_set.add(g["away_team"])
+                teams_set.add(g["home_team"])
+                for pdata in g["players"].values():
+                    if pdata.get("jersey_number"):
+                        jerseys_set.add(str(pdata["jersey_number"]))
+            prompt = (
+                f"台灣少棒社區棒球轉播，對戰隊伍：{'、'.join(sorted(teams_set))}。"
+                f"常見背號：{'、'.join(sorted(jerseys_set))}號。"
+                "常見詞彙：一局上、二局下、三振、四壞球保送、一壘安打、二壘安打、游擊手、三壘手、接殺、刺殺、換投。"
+            )
+            print(f"  [ASR 補轉錄] {vid} Scorebug=0 幀，預轉錄全片語音以重建半局時間軸...", flush=True)
+            t0 = time.perf_counter()
+            audio_tmp = tmp_dir / f"{vid}.audio"
+            actual_audio: Optional[Path] = None
+            try:
+                actual_audio = download_temp_audio(vid, audio_tmp)
+                new_segs = _transcribe_audio_windows(model, actual_audio, vid, [(65, dur_sec)], prompt, tmp_dir)
+                cached["segments"] = sorted(new_segs, key=lambda s: (s["start"], s["end"]))
+                cached["windows"] = [list(x) for x in _merge_windows([(65, dur_sec)])]
+                cached["model"] = model_size
+                cached["word_timestamps"] = True
+                t_cache.write_text(json.dumps(cached, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                print(f"    -> 完成全片轉錄 {len(new_segs)} 段語音 (耗時 {time.perf_counter() - t0:.1f}s)", flush=True)
+            except Exception as exc:
+                print(f"    -> [WARN] {vid} 補轉錄失敗 ({exc})", flush=True)
+            finally:
+                if actual_audio and actual_audio.exists():
+                    actual_audio.unlink()
+                for leftover in tmp_dir.glob(f"{vid}.*"):
+                    if leftover.suffix != ".mp4":
+                        leftover.unlink(missing_ok=True)
+
+        if cached.get("segments"):
+            transcripts_by_vid[vid] = cached
+
+    return transcripts_by_vid
+
+
 async def run_clips_pipeline(
     since_date: Optional[str] = "2026-10-01",
     match_ids: Optional[list[int]] = None,
@@ -222,15 +320,27 @@ async def run_clips_pipeline(
         ]
     print(f"  - 取得 {len(games)} 場含逐打席紀錄賽事", flush=True)
 
-    # 2. 軌道 A：Scorebug 掃描與初版對齊
+    # 2. 軌道 A：Scorebug 掃描與初版對齊（零偵測場次改採軌道 B-0 語音半局重建）
     print("\n>>> [2/5] 軌道 A：Scorebug 視覺狀態機掃描與對齊...", flush=True)
     raw_scans = await ensure_scorebug_scans(games, align_only=align_only)
+    transcripts_by_vid = _load_or_prepare_zero_scorebug_transcripts(
+        games=games,
+        raw_scans=raw_scans,
+        asr_mode=asr_mode,
+        model_size=model_size,
+        align_only=align_only,
+    )
 
     conn = get_db_connection(db_path)
     try:
         clips_by_match: dict[int, list[dict[str, Any]]] = {}
         for g in games:
-            clist = align_game_all_players(g, raw_scans, conn=conn)
+            clist = align_game_all_players(
+                g,
+                raw_scans,
+                conn=conn,
+                transcripts_by_vid=transcripts_by_vid,
+            )
             clips_by_match[int(g["match_id"])] = clist
 
         track_a_total = sum(len(v) for v in clips_by_match.values())

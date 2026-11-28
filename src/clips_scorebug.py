@@ -693,6 +693,7 @@ def _find_bs_reset_near(
 def _partition_halves_across_videos(
     raw_scans_in_order: list[dict[str, Any]],
     expected_halves: list[tuple[str, int]],
+    transcripts_by_vid: Optional[dict[str, dict[str, Any]]] = None,
 ) -> list[tuple[str, list[tuple[str, int]]]]:
     """當單場比賽有多段影片 (Part 1 / Part 2) 時，依各段實際偵測半局分配半局清單。"""
     if len(raw_scans_in_order) == 1:
@@ -711,13 +712,21 @@ def _partition_halves_across_videos(
                 if hk in half_by_hk:
                     counts[hk] += 1
         valid_set = {hk for hk, c in counts.items() if c >= 2}
+        total_det = sum(counts.values())
+        if not valid_set and transcripts_by_vid:
+            tr_segs = (transcripts_by_vid.get(scan["video_id"]) or {}).get("segments", [])
+            if len(tr_segs) >= 20:
+                from src.clips_asr import detect_transcript_halves
+
+                valid_set = detect_transcript_halves(tr_segs, expected_halves)
+                total_det = len(valid_set)
         scan_stats.append(
             {
                 "order_idx": order_idx,
                 "scan": scan,
                 "vid": scan["video_id"],
                 "valid_set": valid_set,
-                "total_det": sum(counts.values()),
+                "total_det": total_det,
             }
         )
 
@@ -801,10 +810,45 @@ def store_scorebug_segments_to_db(
             )
 
 
+def _build_game_lineup_matchers(
+    game: dict[str, Any],
+    build_matcher_fn: Any,
+) -> list[dict[str, Any]]:
+    """為單場海盜先發球員建置 matcher 清單，供 ASR 偵測賽前打序介紹群集。"""
+    team_name = str(game.get("team_name") or "").strip()
+    norm_target = re.sub(r"\s+", "", team_name).replace("臺", "台")
+    pirate_lineup: list[dict[str, Any]] = []
+    for lu_team, items in (game.get("lineups") or {}).items():
+        if re.sub(r"\s+", "", str(lu_team)).replace("臺", "台") == norm_target:
+            pirate_lineup = items
+            break
+
+    order_by_name: dict[str, str] = {}
+    for item in pirate_lineup:
+        if str(item.get("order", "")).isdigit():
+            order_by_name.setdefault(str(item["masked_name"]).strip(), str(item["order"]))
+
+    matchers: list[dict[str, Any]] = []
+    for uid, pdata in (game.get("players") or {}).items():
+        mname = str(pdata.get("masked_name") or "").strip()
+        b_order = order_by_name.get(mname)
+        if pdata.get("starting_position") or b_order:
+            matchers.append(
+                build_matcher_fn(
+                    uid,
+                    mname,
+                    pdata.get("jersey_number"),
+                    batting_order=b_order,
+                )
+            )
+    return matchers
+
+
 def align_game_all_players(
     game: dict[str, Any],
     raw_scans_by_vid: dict[str, dict[str, Any]],
     conn: Optional[sqlite3.Connection] = None,
+    transcripts_by_vid: Optional[dict[str, dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
     """將單場所有海盜球員的打席／投球／守備事件對齊至 Scorebug 時間軸，產出初版 clip 清單。"""
     videos = game.get("youtube_videos", [])
@@ -824,7 +868,11 @@ def align_game_all_players(
         for hi in game["half_innings"]
     }
 
-    part_assignments = _partition_halves_across_videos(available_scans, expected_halves)
+    part_assignments = _partition_halves_across_videos(
+        available_scans,
+        expected_halves,
+        transcripts_by_vid=transcripts_by_vid,
+    )
     assigned_vids = {vid for vid, sub in part_assignments if sub}
     if conn is not None:
         match_id_cur = int(game["match_id"])
@@ -845,6 +893,28 @@ def align_game_all_players(
         if not sub_halves:
             continue
         cleaned = clean_scorebug_timeline(raw_scans_by_vid[vid], sub_halves, pa_counts_by_label)
+        detected_halves_cnt = sum(
+            1 for seg in cleaned.get("half_segments", []) if not seg.get("is_interpolated")
+        )
+        weak_or_zero_scorebug = (detected_halves_cnt == 0) or (
+            detected_halves_cnt <= 1 and len(sub_halves) >= 3
+        )
+        if weak_or_zero_scorebug and transcripts_by_vid:
+            tr_segs = (transcripts_by_vid.get(vid) or {}).get("segments", [])
+            if len(tr_segs) >= 20:
+                from src.clips_asr import build_player_matcher, infer_half_segments_from_transcript
+
+                lineup_matchers = _build_game_lineup_matchers(game, build_player_matcher)
+                dur_sec = int(raw_scans_by_vid[vid].get("duration_sec") or 0)
+                asr_segs = infer_half_segments_from_transcript(
+                    transcript_segments=tr_segs,
+                    expected_halves=sub_halves,
+                    duration_sec=dur_sec,
+                    pa_counts_by_label=pa_counts_by_label,
+                    lineup_matchers=lineup_matchers,
+                )
+                if asr_segs:
+                    cleaned["half_segments"] = asr_segs
         if conn is not None:
             store_scorebug_segments_to_db(conn, vid, cleaned)
         for seg in cleaned["half_segments"]:
@@ -861,13 +931,15 @@ def align_game_all_players(
         vid, seg, samples = seg_by_label[hlabel]
         h_start = int(seg["start_sec"])
         h_end = int(seg["end_sec"])
-        is_interp_half = bool(seg.get("is_interpolated"))
+        is_asr_half = seg.get("source") == "asr_anchor"
+        is_interp_half = bool(seg.get("is_interpolated")) or is_asr_half
         half_samples = [] if is_interp_half else [s for s in samples if h_start <= s["t"] <= h_end]
         half_time_map[hlabel] = {
             "video_id": vid,
             "start_sec": h_start,
             "end_sec": h_end,
             "is_interpolated": is_interp_half,
+            "is_asr_anchor": is_asr_half,
         }
 
         t_out1: Optional[int] = None
@@ -937,7 +1009,7 @@ def align_game_all_players(
 
                 if is_interp_half:
                     pa_start = int(round(est_start))
-                    method = "bracket_interp"
+                    method = "asr_half_interp" if is_asr_half else "bracket_interp"
                     conf = "low"
                 elif bs_snap is not None:
                     pa_start = bs_snap
@@ -980,7 +1052,11 @@ def align_game_all_players(
                     "half_end_sec": h_end,
                     "pa_start_sec": max(r_s, last_pa_end),
                     "pa_end_sec": r_e if ev["outs_delta"] > 0 else min(r_e, last_pa_end + 10),
-                    "method": "bracket_interp" if is_interp_half else "scorebug_anchor_interp",
+                    "method": (
+                        "asr_half_interp"
+                        if is_asr_half
+                        else ("bracket_interp" if is_interp_half else "scorebug_anchor_interp")
+                    ),
                     "confidence": "low" if is_interp_half else "medium",
                 }
 
@@ -1033,8 +1109,15 @@ def align_game_all_players(
 
             if st_idx <= 1:
                 start_sec = max(0, h_info["start_sec"] - PRE_ROLL_PITCH_SEC)
-                method = "bracket_interp" if h_info["is_interpolated"] else "scorebug_half_start"
-                conf = "low" if h_info["is_interpolated"] else "high"
+                if h_info.get("is_asr_anchor"):
+                    method = "asr_half_start"
+                    conf = "medium"
+                elif h_info["is_interpolated"]:
+                    method = "bracket_interp"
+                    conf = "low"
+                else:
+                    method = "scorebug_half_start"
+                    conf = "high"
                 vid = h_info["video_id"]
             else:
                 prev_t = None
