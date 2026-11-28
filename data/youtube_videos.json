@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-27T16:34:04Z",
+  "updated_at": "2026-11-28T01:41:24Z",
   "videos": {
     "-Onb2HuiG6M": {
       "video_id": "-Onb2HuiG6M",
@@ -4256,6 +4256,22 @@
       "part_label": null,
       "is_match_video": 1,
       "fetched_at": "2026-11-25T06:15:28Z"
+    },
+    "xZyohkNu7sA": {
+      "video_id": "xZyohkNu7sA",
+      "channel_id": "UCZBmgBnKf1GOFEGq1tMdJcg",
+      "channel_handle": "@就是棒-臺中桃園高雄",
+      "source_tab": "streams",
+      "title": "【臺中U10 大聯盟】G16 台中小海盜 vs 台中道奇Major",
+      "url": "https://www.youtube.com/watch?v=xZyohkNu7sA",
+      "duration_sec": 5547,
+      "is_live_content": 1,
+      "broadcast_start_utc": null,
+      "broadcast_date_iso": null,
+      "broadcast_time": null,
+      "part_label": null,
+      "is_match_video": 1,
+      "fetched_at": "2026-11-28T01:41:24Z"
     },
     "xfu0r8bxRSk": {
       "video_id": "xfu0r8bxRSk",
