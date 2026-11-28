@@ -46,6 +46,8 @@ data/tmp_clips_media/
 data/tmp_poc_videos/
 data/poc_eval/
 data/poc_scorebug/
+data/vlm_cache/
+.env
 
 # 封存之舊版腳本與歷史文件
 OLD/

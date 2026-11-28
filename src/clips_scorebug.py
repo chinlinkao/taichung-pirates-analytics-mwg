@@ -526,6 +526,20 @@ def clean_scorebug_timeline(
         start_i, end_i = best_block[0], best_block[-1]
         start_sec = cleaned[start_i]["t"]
         end_sec = cleaned[end_i]["t"] + int(round(raw_scan.get("sample_interval_sec", SAMPLE_INTERVAL_SEC)))
+        raw_det_cnt = sum(
+            1
+            for i in range(start_i, end_i + 1)
+            if samples[i].get("detected")
+            and samples[i].get("half") in ("TOP", "BOT")
+            and isinstance(samples[i].get("inning"), int)
+            and _half_sort_key(samples[i]["half"], samples[i]["inning"]) == hk
+        )
+        # 過濾單幀孤立誤判（如僅 1 幀 OCR 命中經滑動視窗擴張成 15 秒），交由插值邏輯處理
+        if n >= 10 and (
+            raw_det_cnt < 3
+            or (pa_counts.get(expected_keys[hk], 3) >= 3 and (end_sec - start_sec) < 25)
+        ):
+            continue
         cursor_idx = end_i + 1
 
         detected_by_hk[hk] = {
@@ -938,6 +952,7 @@ def align_game_all_players(
             "video_id": vid,
             "start_sec": h_start,
             "end_sec": h_end,
+            "sample_count": int(seg.get("sample_count") or 0),
             "is_interpolated": is_interp_half,
             "is_asr_anchor": is_asr_half,
         }
@@ -970,6 +985,8 @@ def align_game_all_players(
                 )
             cum_outs = min(3, cum_outs + ev["outs_delta"])
 
+        has_real_out1 = t_out1 is not None
+        has_real_out2 = t_out2 is not None
         span = max(20, h_end - h_start)
         total_pa = max(1, len(pa_events))
         if t_out1 is None and (pa_buckets[1] or pa_buckets[2]):
@@ -993,9 +1010,9 @@ def align_game_all_players(
             r_start, r_end = bucket_ranges[outs_b]
             r_span = max(8, r_end - r_start)
             has_hard_anchor = (
-                (outs_b == 0 and t_out1 is not None)
-                or (outs_b == 1 and t_out1 is not None and t_out2 is not None)
-                or (outs_b == 2 and t_out2 is not None)
+                (outs_b == 0 and has_real_out1)
+                or (outs_b == 1 and has_real_out1 and has_real_out2)
+                or (outs_b == 2 and has_real_out2)
             )
             k = len(b_pas)
 

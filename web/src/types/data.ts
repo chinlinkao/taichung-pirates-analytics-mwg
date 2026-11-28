@@ -20,6 +20,11 @@ export type ClipType = "batting" | "pitching" | "fielding";
 export type ClipConfidence = "high" | "medium" | "low";
 export type ClipAlignMethod =
   | "dual_track"
+  | "dual_track_bracket"
+  | "asr_half_interp"
+  | "asr_half_start"
+  | "vlm_fallback"
+  | "vlm_cv_refined"
   | "scorebug_anchor"
   | "scorebug_bs_reset"
   | "scorebug_half_start"

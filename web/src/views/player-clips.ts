@@ -95,13 +95,19 @@ function formatConfidenceTitle(clip: PlayerClipItem): string {
   const methodLabel =
     clip.align_method === "dual_track"
       ? "雙軌定位（Scorebug + 語音逐字稿精修）"
-      : clip.align_method === "manual"
-        ? "人工微調校準"
-        : clip.confidence === "high"
-          ? "Scorebug 錨點精準鎖定"
-          : clip.confidence === "medium"
-            ? "Scorebug 出局區間推算"
-            : "記分板缺漏區間推估（建議前後略微拖曳）";
+      : clip.align_method === "vlm_cv_refined"
+        ? "視覺九宮格 AI ＋ OpenCV 動作微調"
+        : clip.align_method === "vlm_fallback"
+          ? "視覺九宮格 AI 盲區定位（VLM Fallback）"
+          : clip.align_method === "dual_track_bracket"
+            ? "雙軌夾擠精修"
+            : clip.align_method === "manual"
+              ? "人工微調校準"
+              : clip.confidence === "high"
+                ? "Scorebug 錨點精準鎖定"
+                : clip.confidence === "medium"
+                  ? "Scorebug 出局區間推算"
+                  : "記分板缺漏區間推估（建議前後略微拖曳）";
   return `${clip.event_detail}\n開始秒數：${clip.time_display}（${methodLabel}）`;
 }
 
@@ -121,7 +127,11 @@ function renderClipListCell(
     a.className = `clip-pill clip-pill--${clipType}`;
     if (clip.confidence === "low") {
       a.classList.add("clip-pill--low");
-    } else if (clip.align_method === "dual_track") {
+    } else if (
+      clip.align_method === "dual_track" ||
+      clip.align_method === "vlm_cv_refined" ||
+      clip.align_method === "vlm_fallback"
+    ) {
       a.classList.add("clip-pill--dual");
     }
     a.href = clip.youtube_url;

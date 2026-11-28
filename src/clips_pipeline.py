@@ -36,6 +36,7 @@ from src.clips_scorebug import (
     align_game_all_players,
     ensure_scorebug_scans,
 )
+from src.clips_vlm_fallback import DEFAULT_VLM_MODEL, refine_clips_with_vlm_fallback
 from src.db import DEFAULT_DB_PATH, get_db_connection, init_db
 from src.export_clips_json import DEFAULT_CLIPS_OUTPUT_PATH, export_clips_json
 from src.match_events import fetch_and_parse_matches
@@ -182,7 +183,11 @@ def store_player_clips_to_db(
                 if preserve_higher_confidence and align_method not in ("manual", "manual_override"):
                     old = existing_by_key.get(k)
                     if old is not None and old[0] == vid:
-                        if _CONF_RANK.get(conf, 0) < _CONF_RANK.get(old[3], 0):
+                        is_vlm_upgrade = (
+                            align_method in ("vlm_fallback", "vlm_cv_refined")
+                            and old[2] not in ("dual_track", "manual", "manual_override", "vlm_cv_refined")
+                        )
+                        if not is_vlm_upgrade and _CONF_RANK.get(conf, 0) < _CONF_RANK.get(old[3], 0):
                             vid, start_sec, align_method, conf = old
 
                 conn.execute(
@@ -324,6 +329,9 @@ async def run_clips_pipeline(
     model_size: str = "base",
     pa_pre_roll: Optional[float] = None,
     force_asr: bool = False,
+    vlm_mode: str = "blind_only",
+    vlm_model: str = DEFAULT_VLM_MODEL,
+    vlm_opencv_refine: bool = True,
     parse_only: bool = False,
     align_only: bool = False,
     refresh_html: bool = False,
@@ -331,14 +339,14 @@ async def run_clips_pipeline(
     json_output: Path | str = DEFAULT_CLIPS_OUTPUT_PATH,
 ) -> None:
     print("=" * 60)
-    print(f"【球員影片集合雙軌定位管線】啟動 (since={since_date}, asr={asr_mode})")
+    print(f"【球員影片集合三軌定位管線】啟動 (since={since_date}, asr={asr_mode}, vlm={vlm_mode})")
     print("=" * 60)
 
     init_db(db_path)
     ensure_overrides_template()
 
     # 1. 官網單場解析
-    print("\n>>> [1/5] 解析官網單場攻守與逐打席紀錄...", flush=True)
+    print("\n>>> [1/6] 解析官網單場攻守與逐打席紀錄...", flush=True)
     games = fetch_and_parse_matches(
         db_path=db_path,
         since_date=since_date,
@@ -354,7 +362,7 @@ async def run_clips_pipeline(
     print(f"  - 取得 {len(games)} 場含逐打席紀錄賽事", flush=True)
 
     # 2. 軌道 A：Scorebug 掃描與初版對齊（零偵測場次改採軌道 B-0 語音半局重建）
-    print("\n>>> [2/5] 軌道 A：Scorebug 視覺狀態機掃描與對齊...", flush=True)
+    print("\n>>> [2/6] 軌道 A：Scorebug 視覺狀態機掃描與對齊...", flush=True)
     raw_scans = await ensure_scorebug_scans(games, align_only=align_only)
     transcripts_by_vid = _load_or_prepare_zero_scorebug_transcripts(
         games=games,
@@ -379,8 +387,8 @@ async def run_clips_pipeline(
         track_a_total = sum(len(v) for v in clips_by_match.values())
         print(f"  - 軌道 A 初版對齊完成：共 {track_a_total} 筆片段", flush=True)
 
-        # 3. 軌道 B：本機 faster-whisper ASR 逐字稿精修
-        print("\n>>> [3/5] 軌道 B：本機 faster-whisper ASR 語音精修...", flush=True)
+        # 3. 軌道 B：本機 faster-whisper ASR 語音逐字稿精修
+        print("\n>>> [3/6] 軌道 B：本機 faster-whisper ASR 語音精修...", flush=True)
         asr_stats = refine_clips_with_asr(
             games=games,
             clips_by_match=clips_by_match,
@@ -397,8 +405,26 @@ async def run_clips_pipeline(
             flush=True,
         )
 
-        # 4. 人工覆寫與入庫
-        print("\n>>> [4/5] 套用人工覆寫並寫入 player_video_clips...", flush=True)
+        # 4. 軌道 C：Targeted VLM Fallback ＋ OpenCV ±2s 局部微調（僅處理無 ASR 且無 Scorebug 盲區）
+        print("\n>>> [4/6] 軌道 C：Targeted VLM Fallback 盲區定位與微調...", flush=True)
+        vlm_stats = refine_clips_with_vlm_fallback(
+            games=games,
+            clips_by_match=clips_by_match,
+            conn=conn,
+            vlm_mode=vlm_mode,
+            model_name=vlm_model,
+            use_opencv_refine=vlm_opencv_refine,
+            align_only=align_only,
+        )
+        print(
+            f"  - 軌道 C 完成：偵測盲區 {vlm_stats['blind_windows']} 段，"
+            f"快取命中 {vlm_stats['cache_hits']}，API 呼叫 {vlm_stats['vlm_calls']}，"
+            f"升級 {vlm_stats['clips_upgraded']} 筆片段",
+            flush=True,
+        )
+
+        # 5. 人工覆寫與入庫
+        print("\n>>> [5/6] 套用人工覆寫並寫入 player_video_clips...", flush=True)
         ov_cnt = apply_manual_overrides(clips_by_match)
         stored_cnt = store_player_clips_to_db(conn, clips_by_match, preserve_higher_confidence=not force_asr)
         print(f"  - 入庫完成：共 {stored_cnt} 筆 (含人工覆寫 {ov_cnt} 筆)", flush=True)
@@ -406,8 +432,8 @@ async def run_clips_pipeline(
         conn.close()
         shutil.rmtree(TMP_MEDIA_DIR, ignore_errors=True)
 
-    # 5. 匯出靜態 JSON
-    print("\n>>> [5/5] 匯出靜態前端 player-clips.json...", flush=True)
+    # 6. 匯出靜態 JSON
+    print("\n>>> [6/6] 匯出靜態前端 player-clips.json...", flush=True)
     export_clips_json(db_path=db_path, output_path=json_output)
 
 
@@ -425,6 +451,23 @@ def main() -> None:
     parser.add_argument("--model", type=str, default="base", help="faster-whisper 模型尺寸 (預設 base)")
     parser.add_argument("--pa-pre-roll", type=float, default=None, help="打席命中唱名後往前預留秒數 (speech_pa 預設 1.0，其餘 5.0)")
     parser.add_argument("--force-asr", action="store_true", help="忽略既有語音轉錄快取，針對目標視窗強制重跑 Whisper")
+    parser.add_argument(
+        "--vlm-mode",
+        choices=["off", "blind_only", "cv_only", "force"],
+        default="blind_only",
+        help="軌道 C 盲區視覺定位模式 (預設 blind_only；無 GEMINI_API_KEY 時自動安全略過)",
+    )
+    parser.add_argument(
+        "--vlm-model",
+        type=str,
+        default=DEFAULT_VLM_MODEL,
+        help=f"軌道 C Gemini 視覺模型名稱 (預設 {DEFAULT_VLM_MODEL})",
+    )
+    parser.add_argument(
+        "--no-vlm-opencv-refine",
+        action="store_true",
+        help="停用軌道 C VLM 定位後的 OpenCV 局部 ±2~5 秒微調",
+    )
     parser.add_argument("--parse-only", action="store_true", help="不連網抓 myscore.games")
     parser.add_argument("--align-only", action="store_true", help="僅使用既有本地快取重新對齊")
     parser.add_argument("--refresh-html", action="store_true", help="強制重新下載範圍內單場 HTML 快取")
@@ -445,6 +488,9 @@ def main() -> None:
             model_size=args.model,
             pa_pre_roll=args.pa_pre_roll,
             force_asr=args.force_asr,
+            vlm_mode=args.vlm_mode,
+            vlm_model=args.vlm_model,
+            vlm_opencv_refine=not args.no_vlm_opencv_refine,
             parse_only=args.parse_only,
             align_only=args.align_only,
             refresh_html=args.refresh_html,
